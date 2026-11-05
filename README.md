@@ -10,7 +10,7 @@ the 17 mutants, what is still not covered, and what the spike changed in the des
 ```
 forge build
 forge test             # invariants, directed scenarios, liveness, gas, Reactive glue (~25 s)
-script/mutants.sh      # every deliberately broken variant must fail; the real contracts must pass (~20 min)
+script/mutants.sh      # every deliberately broken variant must fail; the real contracts must pass (~30 min)
 ```
 
 Tested by fuzz + mutation (not proven), against our own model of the network. MIT licensed.
