@@ -14,9 +14,18 @@ import {MockToken} from "../mocks/MockToken.sol";
 /// The network model. It owns one in-memory queue of messages in both directions:
 ///   core -> wallet : callback payloads (Intent events of the core)
 ///   wallet/console -> core : origin events, as raw logs
-/// and lets the fuzzer deliver in order, reorder, drop, duplicate and delay them, and orphan a
-/// wallet transaction (a reorg: its state is rolled back but its events already escaped to the
-/// reactive side and stay in the queue). It also keeps the STOP ghosts used by invariant (b).
+/// and lets the fuzzer deliver in order, reorder, drop, duplicate and delay them, and reorg a
+/// wallet transaction. A reorg runs the transaction on a competing branch: its events escape to
+/// the reactive side at once, the branch stays alive for `window` seconds (0 = instant orphan),
+/// and while it is alive a re-read (verify) sent to that chain may be served from it. Then the
+/// branch is abandoned; the transaction is re-included later or lost. The model keeps
+/// window < the chain's confirmation wait: that is the assumption the design rests on.
+///
+/// Ghosts, kept from the test's own record of what the owner did and what the network delivered,
+/// never from the contracts under test:
+///   - the owner's cap for each day (invariant a);
+///   - when STOP is in effect on each chain and which grants belong to its epoch (invariant b);
+///   - the owner's intent (stopped or not), checked after the network heals (invariant s).
 contract NetworkHandler is Test {
     uint8 public constant N = 3;
     uint256 public constant CAP = 20e6; // $20, 6 decimals
@@ -24,12 +33,16 @@ contract NetworkHandler is Test {
     uint256 public constant LOW = 1e6;
     uint256 public constant PER_CALL = 10e6;
     uint256 public constant MAX_QUEUE = 400;
+    /// After the network heals: rounds of (deliver everything, 5 min pass, Cron tick, every agent
+    /// retries). 40 rounds = 3h20m, above the longest retry backoff (300 s x 32 = 2h40m).
+    uint256 public constant HEAL_ROUNDS = 40;
+    uint256 public constant HEAL_STEP = 300;
 
     address public constant OWNER = address(0xA11CE);
     address public constant AGENT = address(0xA6E47);
     address public constant PAYEE = address(0xBEEF);
     address public constant BRIDGE = address(0xB21D6E);
-    uint8 internal constant FROM_CONSOLE = 255;
+    uint8 public constant FROM_CONSOLE = 255;
 
     BudgetCoreHarness public core;
     OwnerConsole public console;
@@ -43,19 +56,41 @@ contract NetworkHandler is Test {
         bytes data; // toWallet: calldata. toCore: abi.encode(bytes32[] topics, bytes data)
     }
 
+    /// A transaction on a competing branch of `chain`, alive until `until`.
+    struct Branch {
+        uint8 chain;
+        uint64 at;
+        uint64 until;
+        bytes data;
+    }
+
     Msg[] internal q;
     Msg[] internal late; // held back by the network, released much later
     Msg[64] internal history; // recently delivered, for late redelivery (replay)
     uint256 internal hcount;
+    Branch[] internal branches;
 
     bool public immutable chaosOn;
     uint64 public immutable startDay;
     uint256 internal callSeq;
 
-    // ---- ghosts
-    uint256 public ghostMaxCap;
+    // ---- ghost: the owner's cap per day
+    mapping(uint64 => uint256) public ownerCapOfNonce; // what the owner set, by console nonce
+    uint64 public ownerCapIssued;
+    uint64 public gCapNonce; // newest owner cap message delivered to the coordinator
+    uint256 public gCfgCap; // the owner's cap in that message
+    mapping(uint64 => uint256) public gDayCap; // the owner's cap for day d (0 = day not open)
+
+    // ---- ghost: owner intent for STOP (sequence numbers of owner actions)
+    uint256 internal ownerSeq;
+    uint256 public gLastPressSeq;
+    uint256 public gLastUnstopSeq;
+
+    // ---- ghost: STOP in effect per chain (invariant b)
     uint256 public violations;
     string public firstViolation;
+    uint256 public stopViolations;
+    string public firstStopViolation;
     bool[3] public gFrozen;
     uint64[3] public gEpoch;
     uint64[3] public gPressMark;
@@ -74,6 +109,8 @@ contract NetworkHandler is Test {
     uint256 public dropped;
     uint256 public duplicated;
     uint256 public orphaned;
+    uint256 public delayedReorgs;
+    uint256 public branchReads;
     uint256 public stops;
     uint256 public unstops;
     uint256 public capChanges;
@@ -82,6 +119,8 @@ contract NetworkHandler is Test {
     uint256 public outages;
     uint256 public delayed;
     uint256 public partitions;
+    uint256 public heals;
+    uint256 public healsWhileStopped;
     uint256 public staleGrants; // grants delivered with an epoch older than the wallet's
     uint256 public staleGrantsUnfrozen; // ... while the wallet was not frozen
     uint256 public freshStaleUnfrozen; // ... and not yet seen/tombstoned: the only rule-6 path
@@ -109,7 +148,7 @@ contract NetworkHandler is Test {
         });
         core = mutant == 0 ? new BudgetCoreHarness(p, address(this)) : new MutantCore(p, address(this), mutant);
         console = new OwnerConsole(OWNER);
-        ghostMaxCap = CAP;
+        gCfgCap = CAP;
         for (uint8 c; c < N; c++) {
             MockToken t = new MockToken();
             Vault v = new Vault(IERC20Min(address(t)), OWNER);
@@ -183,7 +222,7 @@ contract NetworkHandler is Test {
     }
 
     function tick() public {
-        _run(address(core), address(this), abi.encodeCall(BudgetCoreHarness.onTick, ()));
+        _runCore(abi.encodeCall(BudgetCoreHarness.onTick, ()), 0);
     }
 
     function duplicate(uint256 s) public {
@@ -191,6 +230,13 @@ contract NetworkHandler is Test {
         Msg memory m = q[s % q.length];
         q.push(m);
         duplicated++;
+    }
+
+    /// Now and then the network heals and stays healthy for a few hours; then the owner-level STOP
+    /// property is checked (invariant s). Rare, because it is long.
+    function heal(uint256 s) external {
+        if (!chaosOn || s % 8 != 0) return;
+        healAndSettle();
     }
 
     /// Faults and owner actions; disabled in the liveness model.
@@ -206,21 +252,16 @@ contract NetworkHandler is Test {
         } else if (op == 1) {
             duplicate(r);
         } else if (op == 2) {
-            _orphan(r);
+            _reorg(r);
         } else if (op == 3) {
             if (r % 2 == 0) _pressStop(uint8((r >> 1) % N));
         } else if (op == 4 || op == 12) {
-            // the owner lifts STOP only when the dashboard (Lasna) shows it frozen
-            if (core.frozen()) {
-                _run(address(console), OWNER, abi.encodeCall(OwnerConsole.unstop, (core.epoch())));
-                unstops++;
-            }
+            // the owner lifts STOP only when the dashboard (Lasna) shows it frozen, naming the
+            // epoch the dashboard shows
+            if (core.frozen()) _ownerUnstop(core.epoch());
         } else if (op == 5) {
             uint256[3] memory caps = [uint256(12e6), 20e6, 30e6];
-            uint256 nc = caps[r % 3];
-            if (nc > ghostMaxCap) ghostMaxCap = nc;
-            _run(address(console), OWNER, abi.encodeCall(OwnerConsole.setCap, (nc)));
-            capChanges++;
+            _ownerSetCap(caps[r % 3]);
         } else if (op == 6) {
             if (r % 4 != 0) return;
             uint8 c = uint8((r >> 2) % N);
@@ -262,7 +303,7 @@ contract NetworkHandler is Test {
             }
         } else if (op == 14) {
             // a destination chain is unreachable for 1-30 min (proxy down, congestion, payer in
-            // debt): every callback to it is held back, then released out of order
+            // debt): every callback created meanwhile is held back
             uint8 c = uint8(r % N);
             partitionUntil[c] = uint64(block.timestamp + _bound(r >> 8, 60, 1800));
             partitions++;
@@ -285,17 +326,47 @@ contract NetworkHandler is Test {
 
     function settleFor(uint256 rounds) public {
         for (uint256 round; round < rounds; round++) {
-            uint256 guard;
-            while (q.length > 0 && guard++ < 500) {
-                _deliverAt(0);
-            }
+            deliverAll();
             vm.warp(block.timestamp + 61);
             tick();
         }
-        uint256 g2;
-        while (q.length > 0 && g2++ < 500) {
+        deliverAll();
+    }
+
+    function deliverAll() public {
+        uint256 guard;
+        while (q.length > 0 && guard++ < 1000) {
             _deliverAt(0);
         }
+    }
+
+    /// The network heals: held messages are released, partitions end, competing branches are
+    /// abandoned, and nothing is dropped any more. For HEAL_ROUNDS rounds everything queued is
+    /// delivered in order, 5 minutes pass, Cron ticks, and every agent retries a small payment.
+    /// Then the owner-level STOP property is checked:
+    ///   - every wallet is at the coordinator's epoch (no payment can use an older epoch);
+    ///   - if the owner's last action was a STOP (pressed after the last unstop was issued), the
+    ///     coordinator is frozen, every chain is frozen, and no payment succeeds on any chain.
+    function healAndSettle() public {
+        heals++;
+        for (uint256 i; i < late.length; i++) {
+            q.push(late[i]);
+        }
+        delete late;
+        for (uint8 c; c < N; c++) {
+            partitionUntil[c] = 0;
+        }
+        delete branches;
+        for (uint256 round; round < HEAL_ROUNDS; round++) {
+            deliverAll();
+            vm.warp(block.timestamp + HEAL_STEP);
+            tick();
+            for (uint8 c; c < N; c++) {
+                payExact(c, CAP / 40);
+            }
+        }
+        deliverAll();
+        _checkOwnerStop();
     }
 
     function queueLength() external view returns (uint256) {
@@ -304,13 +375,141 @@ contract NetworkHandler is Test {
 
     /// Debug view: the selector (to wallet) or topic0 (to core) of queued message i.
     function queueAt(uint256 i) external view returns (bool toWallet, uint8 chain, bytes32 tag) {
+        return _tagOf(q[i]);
+    }
+
+    function ownerStopped() public view returns (bool) {
+        return gLastPressSeq > gLastUnstopSeq;
+    }
+
+    // ================================================ directed-test controls
+    // `tag` is the selector (to a wallet) or topic0 (to the core); chain 255 is the console.
+
+    function ownerPressStop(uint8 c) external {
+        _pressStop(c);
+    }
+
+    function ownerUnstop(uint64 e) external {
+        _ownerUnstop(e);
+    }
+
+    function ownerSetCap(uint256 nc) external {
+        _ownerSetCap(nc);
+    }
+
+    function count(bool toWallet, bytes32 tag, uint8 chain) external view returns (uint256 n) {
+        for (uint256 i; i < q.length; i++) {
+            if (_matches(q[i], toWallet, tag, chain)) n++;
+        }
+    }
+
+    function deliverFirst(bool toWallet, bytes32 tag, uint8 chain) external {
+        _deliverAt(_find(toWallet, tag, chain));
+    }
+
+    function dropFirst(bool toWallet, bytes32 tag, uint8 chain) external {
+        _removeAt(_find(toWallet, tag, chain));
+        dropped++;
+    }
+
+    function dropAll(bool toWallet, bytes32 tag, uint8 chain) external {
+        for (uint256 i = q.length; i > 0; i--) {
+            if (_matches(q[i - 1], toWallet, tag, chain)) _removeAt(i - 1);
+        }
+    }
+
+    function holdFirst(bool toWallet, bytes32 tag, uint8 chain) external {
+        uint256 i = _find(toWallet, tag, chain);
+        late.push(q[i]);
+        _removeAt(i);
+    }
+
+    function releaseHeld() external {
+        for (uint256 i; i < late.length; i++) {
+            q.push(late[i]);
+        }
+        delete late;
+    }
+
+    function duplicateFirst(bool toWallet, bytes32 tag, uint8 chain) external {
+        q.push(q[_find(toWallet, tag, chain)]);
+    }
+
+    /// Reorg the first matching callback on a branch that lives `window` seconds (any window,
+    /// also deeper than the wait, so a test can show what the assumption protects).
+    function reorgFirst(bytes32 tag, uint8 chain, uint64 window, bool lost) external {
+        _reorgAt(_find(true, tag, chain), window, lost);
+    }
+
+    /// Deliver the first matching verify, served from the live competing branch of its chain.
+    function deliverOnBranch(uint8 chain) external {
+        uint256 i = _find(true, bytes32(SpendWallet.verify.selector), chain);
         Msg memory m = q[i];
-        if (m.toWallet) return (true, m.chain, bytes32(bytes4(m.data)));
-        (bytes32[] memory topics,) = abi.decode(m.data, (bytes32[], bytes));
-        return (false, m.chain, topics[0]);
+        _removeAt(i);
+        require(_branchAlive(chain), "no live branch");
+        _deliver(m, true);
+    }
+
+    function ownerWithdrawVault(uint8 c) external {
+        uint256 bal = tokens[c].balanceOf(address(vaults[c]));
+        _run(address(vaults[c]), OWNER, abi.encodeCall(Vault.withdraw, (OWNER, bal)));
+        withdraws++;
+    }
+
+    /// Redeliver a matching message from the delivery history (nth = 0: the newest).
+    function replay(bool toWallet, bytes32 tag, uint8 chain, uint256 nth) external {
+        uint256 n = hcount < 64 ? hcount : 64;
+        for (uint256 k; k < n; k++) {
+            Msg memory m = history[(hcount - 1 - k) % 64];
+            if (_matches(m, toWallet, tag, chain)) {
+                if (nth == 0) {
+                    q.push(m);
+                    return;
+                }
+                nth--;
+            }
+        }
+        revert("not in history");
+    }
+
+    /// The first safety rule that does not hold right now, or "" (used by the directed tests).
+    /// (a) is checked first, so a message starting with "(a) paid out" means a real overspend.
+    function safetyFailure() external view returns (string memory) {
+        uint64 last = uint64(block.timestamp / 1 days) + 1;
+        for (uint64 d = startDay; d <= last; d++) {
+            if (_outflow(d) > gDayCap[d]) return "(a) paid out more than the owner's cap for the day";
+        }
+        for (uint64 d = startDay; d <= last; d++) {
+            if (core.capOfDay(d) != gDayCap[d]) return "(a) day cap differs from the owner's configured cap";
+        }
+        if (violations > 0) return firstViolation;
+        if (stopViolations > 0) return firstStopViolation;
+        uint64 t = uint64(block.timestamp / 1 days);
+        for (uint64 d = t; d <= t + 1; d++) {
+            for (uint8 c; c < N; c++) {
+                (uint128 allowance,) = wallets[c].buckets(d);
+                if (allowance > core.heldOf(d, c)) return "(e) wallet allowance above coordinator's held";
+            }
+        }
+        for (uint8 c; c < N; c++) {
+            if (wallets[c].liveUnspent() > tokens[c].balanceOf(address(wallets[c]))) {
+                return "allowance > balance";
+            }
+        }
+        return "";
+    }
+
+    function outflowOfDay(uint64 d) external view returns (uint256) {
+        return _outflow(d);
     }
 
     // ============================================================ internals
+
+    function _outflow(uint64 d) internal view returns (uint256 out) {
+        for (uint256 c; c < N; c++) {
+            out += tokens[c].outflow(address(wallets[c]), d);
+        }
+    }
 
     function _pressStop(uint8 c) internal {
         (bool ok,) = _run(address(wallets[c]), OWNER, abi.encodeCall(SpendWallet.pressStop, ()));
@@ -319,46 +518,130 @@ contract NetworkHandler is Test {
             if (mark <= gPressMark[c]) mark = gPressMark[c] + 1;
             gPressMark[c] = mark;
             gFrozen[c] = true;
+            gLastPressSeq = ++ownerSeq;
         }
         stops++;
     }
 
-    /// A reorg on wallet c's chain: the callback transaction ran, its events escaped to the
-    /// reactive side, then its block was orphaned. Its state is rolled back. With probability 1/2
-    /// the message is re-included later (stays queued), else it is lost.
-    function _orphan(uint256 r) internal {
+    function _ownerUnstop(uint64 e) internal {
+        (bool ok,) = _run(address(console), OWNER, abi.encodeCall(OwnerConsole.unstop, (e)));
+        if (ok) gLastUnstopSeq = ++ownerSeq;
+        unstops++;
+    }
+
+    function _ownerSetCap(uint256 nc) internal {
+        (bool ok,) = _run(address(console), OWNER, abi.encodeCall(OwnerConsole.setCap, (nc)));
+        if (ok) ownerCapOfNonce[++ownerCapIssued] = nc;
+        capChanges++;
+    }
+
+    /// A reorg on some wallet's chain, shallower than that chain's confirmation wait.
+    function _reorg(uint256 r) internal {
         if (q.length == 0) return;
         uint256 start = r % q.length;
         for (uint256 k; k < q.length; k++) {
             uint256 i = (start + k) % q.length;
             if (!q[i].toWallet) continue;
-            Msg memory m = q[i];
-            uint256 snap = vm.snapshotState();
-            vm.recordLogs();
-            vm.prank(BRIDGE);
-            (bool ok,) = address(wallets[m.chain]).call(m.data);
-            Vm.Log[] memory logs = vm.getRecordedLogs();
-            vm.revertToStateAndDelete(snap);
-            if (ok) _route(logs, true);
-            if ((r >> 16) & 1 == 0) _removeAt(i);
-            orphaned++;
+            uint64 window = uint64((r >> 24) % _wait(q[i].chain));
+            _reorgAt(i, window, (r >> 16) & 1 == 0);
             return;
         }
+    }
+
+    /// The callback transaction runs on a branch: its events escape to the reactive side at once,
+    /// its state never becomes canonical. The branch stays readable for `window` seconds. The
+    /// message is then re-included later (stays queued) or lost.
+    function _reorgAt(uint256 i, uint64 window, bool lost) internal {
+        Msg memory m = q[i];
+        uint256 snap = vm.snapshotState();
+        vm.recordLogs();
+        vm.prank(BRIDGE);
+        (bool ok,) = address(wallets[m.chain]).call(m.data);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        vm.revertToStateAndDelete(snap);
+        if (ok) {
+            _route(logs, true);
+            if (window > 0) {
+                _pruneBranches();
+                if (branches.length < 16) {
+                    branches.push(
+                        Branch(m.chain, uint64(block.timestamp), uint64(block.timestamp + window), m.data)
+                    );
+                }
+                delayedReorgs++;
+            }
+        }
+        if (lost) _removeAt(i);
+        orphaned++;
+    }
+
+    function _branchAlive(uint8 c) internal view returns (bool) {
+        for (uint256 i; i < branches.length; i++) {
+            if (branches[i].chain == c && block.timestamp < branches[i].until) return true;
+        }
+        return false;
+    }
+
+    function _pruneBranches() internal {
+        for (uint256 i = branches.length; i > 0; i--) {
+            if (block.timestamp >= branches[i - 1].until) {
+                branches[i - 1] = branches[branches.length - 1];
+                branches.pop();
+            }
+        }
+    }
+
+    /// Run a callback on the live competing branch of its chain: the branch's own transactions
+    /// (at their original times) on top of the current state, then this one. Only this call's
+    /// events escape; then the branch is dropped again.
+    function _runOnBranch(Msg memory m) internal {
+        uint256 nowTs = block.timestamp;
+        uint256 snap = vm.snapshotState();
+        vm.recordLogs();
+        for (uint256 i; i < branches.length; i++) {
+            Branch memory b = branches[i];
+            if (b.chain != m.chain || nowTs >= b.until) continue;
+            vm.warp(b.at);
+            vm.prank(BRIDGE);
+            (bool okB,) = address(wallets[m.chain]).call(b.data);
+            okB;
+        }
+        vm.warp(nowTs);
+        vm.getRecordedLogs(); // the branch's own events already escaped when it was created
+        vm.prank(BRIDGE);
+        (bool ok,) = address(wallets[m.chain]).call(m.data);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        vm.revertToStateAndDelete(snap);
+        vm.warp(nowTs);
+        if (ok) _route(logs, true);
+        branchReads++;
     }
 
     function _deliverAt(uint256 i) internal {
         Msg memory m = q[i];
         _removeAt(i);
+        bool onBranch = chaosOn && m.toWallet && bytes4(m.data) == SpendWallet.verify.selector
+            && _branchAlive(m.chain) && uint256(keccak256(abi.encode(delivered, block.timestamp))) % 2 == 0;
+        _deliver(m, onBranch);
+    }
+
+    function _deliver(Msg memory m, bool onBranch) internal {
         delivered++;
         history[hcount % 64] = m;
         hcount++;
         if (m.toWallet) {
-            if (bytes4(m.data) == SpendWallet.applyGrant.selector) {
-                (uint256 gid,,, uint64 ge) = abi.decode(_tail(m.data), (uint256, uint64, uint256, uint64));
-                if (ge < gEpoch[m.chain] && !gFrozen[m.chain] && !wallets[m.chain].seen(gid)) freshStaleUnfrozen++;
+            if (onBranch) {
+                _runOnBranch(m);
+            } else {
+                if (bytes4(m.data) == SpendWallet.applyGrant.selector) {
+                    (uint256 gid,,, uint64 ge) = abi.decode(_tail(m.data), (uint256, uint64, uint256, uint64));
+                    if (ge < gEpoch[m.chain] && !gFrozen[m.chain] && !wallets[m.chain].seen(gid)) {
+                        freshStaleUnfrozen++;
+                    }
+                }
+                (bool ok,) = _run(address(wallets[m.chain]), BRIDGE, m.data);
+                if (ok) _ghostOnWallet(m.chain, m.data);
             }
-            (bool ok,) = _run(address(wallets[m.chain]), BRIDGE, m.data);
-            if (ok) _ghostOnWallet(m.chain, m.data);
         } else {
             _feedCore(m.chain, m.data);
         }
@@ -370,6 +653,25 @@ contract NetworkHandler is Test {
         vm.prank(sender);
         (ok, ret) = target.call(cd);
         _route(vm.getRecordedLogs(), false);
+    }
+
+    /// A call into the coordinator. Also keeps the owner-cap ghost: a day's cap is the owner's cap
+    /// from the newest cap message delivered when the day opened, raised by any newer, higher
+    /// owner cap delivered while the day is open (today or tomorrow).
+    function _runCore(bytes memory cd, uint64 capNonce) internal {
+        uint64 t = uint64(block.timestamp / 1 days);
+        bool open0 = core.isOpen(t);
+        bool open1 = core.isOpen(t + 1);
+        (bool ok,) = _run(address(core), address(this), cd);
+        if (!ok) return;
+        if (capNonce > gCapNonce) {
+            gCapNonce = capNonce;
+            gCfgCap = ownerCapOfNonce[capNonce];
+            if (open0 && gCfgCap > gDayCap[t]) gDayCap[t] = gCfgCap;
+            if (open1 && gCfgCap > gDayCap[t + 1]) gDayCap[t + 1] = gCfgCap;
+        }
+        if (!open0 && core.isOpen(t)) gDayCap[t] = gCfgCap;
+        if (!open1 && core.isOpen(t + 1)) gDayCap[t + 1] = gCfgCap;
     }
 
     function _route(Vm.Log[] memory logs, bool walletOnly) internal {
@@ -431,14 +733,38 @@ contract NetworkHandler is Test {
         q.pop();
     }
 
+    function _tagOf(Msg memory m) internal pure returns (bool, uint8, bytes32) {
+        if (m.toWallet) return (true, m.chain, bytes32(bytes4(m.data)));
+        (bytes32[] memory topics,) = abi.decode(m.data, (bytes32[], bytes));
+        return (false, m.chain, topics[0]);
+    }
+
+    function _matches(Msg memory m, bool toWallet, bytes32 tag, uint8 chain) internal pure returns (bool) {
+        (bool w, uint8 c, bytes32 t) = _tagOf(m);
+        return w == toWallet && c == chain && t == tag;
+    }
+
+    function _find(bool toWallet, bytes32 tag, uint8 chain) internal view returns (uint256) {
+        for (uint256 i; i < q.length; i++) {
+            if (_matches(q[i], toWallet, tag, chain)) return i;
+        }
+        revert("no such message queued");
+    }
+
+    function _wait(uint8) internal view returns (uint64) {
+        return core.confirmWait();
+    }
+
     function _feedCore(uint8 c, bytes memory enc) internal {
         (bytes32[] memory topics, bytes memory data) = abi.decode(enc, (bytes32[], bytes));
         bytes32 t0 = topics[0];
         bytes memory cd;
+        uint64 capNonce;
         if (c == FROM_CONSOLE) {
             if (t0 == IConsoleEvents.CapSet.selector) {
                 (uint64 nonce, uint256 nc) = abi.decode(data, (uint64, uint256));
                 cd = abi.encodeCall(BudgetCoreHarness.onCapSet, (nonce, nc));
+                capNonce = nonce;
             } else if (t0 == IConsoleEvents.Unstop.selector) {
                 (uint64 nonce, uint64 e) = abi.decode(data, (uint64, uint64));
                 cd = abi.encodeCall(BudgetCoreHarness.onUnstop, (nonce, e));
@@ -473,7 +799,7 @@ contract NetworkHandler is Test {
             BudgetCore.Echo memory v = abi.decode(data, (BudgetCore.Echo));
             cd = abi.encodeCall(BudgetCoreHarness.onVerified, (c, v));
         }
-        if (cd.length > 0) _run(address(core), address(this), cd);
+        if (cd.length > 0) _runCore(cd, capNonce);
     }
 
     // ------------------------------------------------------- STOP ghosts
@@ -521,19 +847,41 @@ contract NetworkHandler is Test {
             uint256 delta = tot - gOutSeen[c];
             if (delta > 0) {
                 gOutSeen[c] = tot;
-                if (gFrozen[c]) _violate("paid while STOP in effect");
+                if (gFrozen[c]) _violate("(b) paid while STOP in effect");
                 gOutSinceRoll[c] += delta;
-                if (gOutSinceRoll[c] > gGrantSinceRoll[c]) _violate("paid from an older epoch's allowance");
+                if (gOutSinceRoll[c] > gGrantSinceRoll[c]) _violate("(b) paid from an older epoch's allowance");
             }
             if (wallets[c].liveUnspent() + gOutSinceRoll[c] > gGrantSinceRoll[c]) {
-                _violate("older epoch's allowance still spendable");
+                _violate("(b) older epoch's allowance still spendable");
             }
+        }
+    }
+
+    /// Invariant (s), checked at the end of healAndSettle().
+    function _checkOwnerStop() internal {
+        if (ownerStopped()) healsWhileStopped++;
+        uint64 e = core.epoch();
+        for (uint8 c; c < N; c++) {
+            if (wallets[c].epoch() != e) _violateStop("(s) a wallet is still on an older epoch after the network healed");
+        }
+        if (!ownerStopped()) return;
+        if (!core.frozen()) _violateStop("(s) the owner's STOP was lifted by an unstop issued before it");
+        for (uint8 c; c < N; c++) {
+            if (!wallets[c].frozen()) _violateStop("(s) the owner's STOP did not reach every chain in time");
+        }
+        for (uint8 c; c < N; c++) {
+            if (payExact(c, CAP / 40)) _violateStop("(s) paid after STOP had time to reach every chain");
         }
     }
 
     function _violate(string memory why) internal {
         if (violations == 0) firstViolation = why;
         violations++;
+    }
+
+    function _violateStop(string memory why) internal {
+        if (stopViolations == 0) firstStopViolation = why;
+        stopViolations++;
     }
 
     function _tail(bytes memory cd) internal pure returns (bytes memory out) {

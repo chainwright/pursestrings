@@ -222,9 +222,12 @@ abstract contract BudgetCore {
         _poke();
     }
 
+    /// Only a strictly newer press acts, so a duplicated, replayed or re-announced log can't
+    /// re-freeze after an unstop. Every new press opens a new frozen epoch, even when already
+    /// frozen: an unstop issued before this press names an older epoch and can never lift it.
     function _onStopPressed(uint8 c, uint64 mark) internal {
-        if (mark > pressSeenAt[c]) pressSeenAt[c] = mark;
-        if (!frozen) {
+        if (mark > pressSeenAt[c]) {
+            pressSeenAt[c] = mark;
             frozen = true;
             epoch++;
             for (uint8 i; i < nChains; i++) {

@@ -78,6 +78,7 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
     /// coordinator has acknowledged in an unfreeze. A press stays in force until acknowledged.
     uint64 public lastPressAt;
     uint64 public pressAckedAt;
+    uint64 public stopEchoAt;
 
     /// Short is emitted once, then again only after SHORT_REARM seconds or when re-armed by an
     /// applied/voided grant, a new epoch or a new day. "Once per day" alone deadlocks a chain for
@@ -128,6 +129,7 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
         uint64 mark = uint64(block.timestamp);
         if (mark <= lastPressAt) mark = lastPressAt + 1;
         lastPressAt = mark;
+        stopEchoAt = uint64(block.timestamp);
         if (_freezesOnPress()) frozen = true;
         emit StopPressed(mark);
     }
@@ -146,7 +148,15 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
     function pay(address payee, uint256 amount, bytes32 callId) external returns (bool) {
         require(msg.sender == agent, "agent");
         _sweep();
-        if (frozen) return _refuse(callId, R_FROZEN);
+        if (frozen) {
+            // A local press the coordinator hasn't acknowledged yet is re-announced (rate-limited),
+            // so a lost StopPressed log can't leave the other chains running.
+            if (lastPressAt > pressAckedAt && block.timestamp >= uint256(stopEchoAt) + SHORT_REARM) {
+                stopEchoAt = uint64(block.timestamp);
+                emit StopPressed(lastPressAt);
+            }
+            return _refuse(callId, R_FROZEN);
+        }
         if (!payeeAllowed[payee]) return _refuse(callId, R_PAYEE);
         if (amount == 0 || amount > perCallCap) return _refuse(callId, R_CAP);
 

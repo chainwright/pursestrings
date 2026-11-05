@@ -8,8 +8,10 @@ import {SpendWallet} from "../src/SpendWallet.sol";
 import {MockToken} from "./mocks/MockToken.sol";
 import {BudgetCoreHarness} from "./harness/BudgetCoreHarness.sol";
 
-/// Safety under the full network model: reorder, drop, duplicate, delay, reorg-orphan, STOP,
-/// unstop, cap changes, vault withdrawals, day boundaries. MUTANT=<n> swaps in a broken variant.
+/// Safety under our own fault model of the network: reorder, drop, duplicate, delay, partitions,
+/// reorgs (instant, or a branch that lives up to just under the chain's confirmation wait), STOP,
+/// unstop, cap changes, vault withdrawals, day boundaries, and now and then a healed network.
+/// MUTANT=<n> swaps in a broken variant.
 contract PursestringsInvariantTest is StdInvariant, Test {
     NetworkHandler internal h;
     BudgetCoreHarness internal core;
@@ -19,7 +21,7 @@ contract PursestringsInvariantTest is StdInvariant, Test {
         uint256 m = vm.envOr("MUTANT", uint256(0));
         h = new NetworkHandler(m, true);
         core = h.core();
-        bytes4[] memory sels = new bytes4[](8);
+        bytes4[] memory sels = new bytes4[](9);
         sels[0] = NetworkHandler.pay.selector;
         sels[1] = NetworkHandler.deliverBatch.selector;
         sels[2] = NetworkHandler.deliverAny.selector;
@@ -28,21 +30,21 @@ contract PursestringsInvariantTest is StdInvariant, Test {
         sels[5] = NetworkHandler.chaos.selector;
         sels[6] = NetworkHandler.duplicate.selector;
         sels[7] = NetworkHandler.deliverNext.selector;
+        sels[8] = NetworkHandler.heal.selector;
         targetContract(address(h));
         targetSelector(FuzzSelector({addr: address(h), selectors: sels}));
     }
 
-    /// (a) Real token outflows (counted by the token, not the wallet) summed over all wallets,
-    /// per day, never exceed that day's cap; and that cap never exceeds anything the owner set.
-    function invariant_a_realOutflowPerDayWithinCap() public view {
+    /// (a) Outflows counted by the token (every transfer out of a wallet except to its own vault),
+    /// summed over all wallets per day, never exceed the owner's cap for that day. The bound comes
+    /// from the test's own record of what the owner set and which of those messages reached the
+    /// coordinator (see NetworkHandler._runCore), not from the coordinator. The coordinator's own
+    /// day cap must equal it exactly, so a stale or replayed cap change is caught on its own.
+    function invariant_a_outflowPerDayWithinOwnersCap() public view {
         uint64 last = core.today() + 1;
         for (uint64 d = h.startDay(); d <= last; d++) {
-            uint256 out;
-            for (uint256 c; c < 3; c++) {
-                out += MockToken(address(h.tokens(c))).outflow(address(h.wallets(c)), d);
-            }
-            assertLe(out, core.capOfDay(d), "(a) paid out more than the day's cap");
-            assertLe(core.capOfDay(d), h.ghostMaxCap(), "(a) day cap above any owner-set cap");
+            assertLe(h.outflowOfDay(d), h.gDayCap(d), "(a) paid out more than the owner's cap for the day");
+            assertEq(core.capOfDay(d), h.gDayCap(d), "(a) day cap differs from the owner's configured cap");
         }
     }
 
@@ -50,6 +52,13 @@ contract PursestringsInvariantTest is StdInvariant, Test {
     /// epoch is ever spent (checked in the handler after every action).
     function invariant_b_noPaymentAfterStopOrFromOldEpoch() public view {
         assertEq(h.violations(), 0, h.firstViolation());
+    }
+
+    /// (s) The owner's STOP, end to end: whenever the network has healed for a bounded time
+    /// (NetworkHandler.healAndSettle), every wallet is on the coordinator's epoch, and if the
+    /// owner's last action was a STOP, every chain is frozen and no payment succeeds anywhere.
+    function invariant_s_ownersStopReachesEveryChain() public view {
+        assertEq(h.stopViolations(), 0, h.firstStopViolation());
     }
 
     /// (c) The coordinator's books: pool + sum(held) == cap for every open day, so the sum
@@ -171,12 +180,15 @@ contract PursestringsCoverageWalk is Test {
             else if (op == 4) h.tick();
             else if (op == 5) h.chaos(s >> 8);
             else h.duplicate(s >> 8);
+            if (i % 500 == 499) h.healAndSettle();
         }
         console2.log("steps", steps);
         console2.log("days crossed / outages", h.daysCrossed(), h.outages());
         console2.log("pays ok / refused", h.paysOk(), h.paysRefused());
         console2.log("delivered / dropped", h.delivered(), h.dropped());
-        console2.log("duplicated / orphaned (reorg)", h.duplicated(), h.orphaned());
+        console2.log("duplicated / reorged (all) / of them on a branch that lived", h.duplicated(), h.orphaned(), h.delayedReorgs());
+        console2.log("re-reads served from a competing branch", h.branchReads());
+        console2.log("heals / of them with the owner's STOP in force", h.heals(), h.healsWhileStopped());
         console2.log("stops / unstops", h.stops(), h.unstops());
         console2.log("cap changes / vault withdrawals", h.capChanges(), h.withdraws());
         console2.log("grants / reclaims sent", h.grantsSent(), h.reclaimsSent());
@@ -187,14 +199,7 @@ contract PursestringsCoverageWalk is Test {
         console2.log("stale-epoch grants delivered / to an unfrozen wallet", h.staleGrants(), h.staleGrantsUnfrozen());
         console2.log("  ... of them never seen before (the rule-6 path)", h.freshStaleUnfrozen());
         console2.log("max queue", h.maxQueue());
-        assertEq(h.violations(), 0, h.firstViolation());
-        BudgetCoreHarness core = h.core();
-        for (uint64 d = h.startDay(); d <= core.today() + 1; d++) {
-            uint256 out;
-            for (uint256 c; c < 3; c++) {
-                out += MockToken(address(h.tokens(c))).outflow(address(h.wallets(c)), d);
-            }
-            assertLe(out, core.capOfDay(d), "(a)");
-        }
+        string memory why = h.safetyFailure();
+        require(bytes(why).length == 0, why);
     }
 }
