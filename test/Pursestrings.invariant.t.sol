@@ -67,6 +67,20 @@ contract PursestringsInvariantTest is StdInvariant, Test {
         }
     }
 
+    /// (e) The per-chain lemma the safety argument rests on: for today and tomorrow, the
+    /// allowance a wallet has received (net of what it really returned) never exceeds what the
+    /// coordinator still counts as held by that chain. Summed over chains this gives (a) for every
+    /// day, before any agent has to overspend for the fuzzer to notice.
+    function invariant_e_walletAllowanceWithinCoreHeld() public view {
+        uint64 t = core.today();
+        for (uint64 d = t; d <= t + 1; d++) {
+            for (uint8 c; c < 3; c++) {
+                (uint128 allowance,) = h.wallets(c).buckets(d);
+                assertLe(allowance, core.heldOf(d, c), "(e) wallet allowance above coordinator's held");
+            }
+        }
+    }
+
     /// Every unit of allowance is backed by a token in the wallet.
     function invariant_allowanceBackedByTokens() public view {
         for (uint256 c; c < 3; c++) {
@@ -146,7 +160,7 @@ contract PursestringsCoverageWalk is Test {
     function test_coverageWalk() public {
         vm.warp(1_800_000_000);
         NetworkHandler h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), true);
-        uint256 steps = 4000;
+        uint256 steps = vm.envOr("WALK_STEPS", uint256(4000));
         for (uint256 i; i < steps; i++) {
             uint256 s = uint256(keccak256(abi.encode("walk", i)));
             uint256 op = s % 7;
@@ -168,6 +182,10 @@ contract PursestringsCoverageWalk is Test {
         console2.log("grants / reclaims sent", h.grantsSent(), h.reclaimsSent());
         console2.log("cancels sent / grants voided", h.cancelsSent(), h.voidsSeen());
         console2.log("confirmed credits", h.credits());
+        console2.log("delayed (held back) / replayed (late redelivery)", h.delayed(), h.replayed());
+        console2.log("chain partitions (callbacks held, released out of order)", h.partitions());
+        console2.log("stale-epoch grants delivered / to an unfrozen wallet", h.staleGrants(), h.staleGrantsUnfrozen());
+        console2.log("  ... of them never seen before (the rule-6 path)", h.freshStaleUnfrozen());
         console2.log("max queue", h.maxQueue());
         assertEq(h.violations(), 0, h.firstViolation());
         BudgetCoreHarness core = h.core();

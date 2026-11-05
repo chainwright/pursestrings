@@ -44,6 +44,9 @@ contract NetworkHandler is Test {
     }
 
     Msg[] internal q;
+    Msg[] internal late; // held back by the network, released much later
+    Msg[64] internal history; // recently delivered, for late redelivery (replay)
+    uint256 internal hcount;
 
     bool public immutable chaosOn;
     uint64 public immutable startDay;
@@ -62,6 +65,7 @@ contract NetworkHandler is Test {
     uint256[3] public gOutSeen;
     mapping(uint256 => bool) internal gCounted;
     uint256[3] public lastNeed; // last refused amount per chain (liveness test)
+    uint64[3] public partitionUntil;
 
     // ---- coverage counters
     uint256 public paysOk;
@@ -76,6 +80,12 @@ contract NetworkHandler is Test {
     uint256 public withdraws;
     uint256 public daysCrossed;
     uint256 public outages;
+    uint256 public delayed;
+    uint256 public partitions;
+    uint256 public staleGrants; // grants delivered with an epoch older than the wallet's
+    uint256 public staleGrantsUnfrozen; // ... while the wallet was not frozen
+    uint256 public freshStaleUnfrozen; // ... and not yet seen/tombstoned: the only rule-6 path
+    uint256 public replayed;
     uint256 public grantsSent;
     uint256 public reclaimsSent;
     uint256 public cancelsSent;
@@ -186,7 +196,7 @@ contract NetworkHandler is Test {
     /// Faults and owner actions; disabled in the liveness model.
     function chaos(uint256 s) external {
         if (!chaosOn) return;
-        uint256 op = s % 9;
+        uint256 op = s % 15;
         uint256 r = s >> 8;
         if (op == 0) {
             if (q.length > 0) {
@@ -198,8 +208,8 @@ contract NetworkHandler is Test {
         } else if (op == 2) {
             _orphan(r);
         } else if (op == 3) {
-            if (r % 8 == 0) _pressStop(uint8((r >> 3) % N));
-        } else if (op == 4) {
+            if (r % 2 == 0) _pressStop(uint8((r >> 1) % N));
+        } else if (op == 4 || op == 12) {
             // the owner lifts STOP only when the dashboard (Lasna) shows it frozen
             if (core.frozen()) {
                 _run(address(console), OWNER, abi.encodeCall(OwnerConsole.unstop, (core.epoch())));
@@ -220,8 +230,49 @@ contract NetworkHandler is Test {
         } else if (op == 7) {
             uint8 c = uint8(r % N);
             tokens[c].mint(address(vaults[c]), 100 * CAP);
-        } else {
+        } else if (op == 8) {
             outage(r);
+        } else if (op == 9 || op == 13) {
+            // hold a message back (long delay); prefers an in-flight grant, the message whose
+            // late arrival the epoch and cancel rules exist for
+            if (q.length > 0 && late.length < 64) {
+                uint256 i = r % q.length;
+                for (uint256 k; k < q.length; k++) {
+                    uint256 j = (r + k) % q.length;
+                    if (q[j].toWallet && bytes4(q[j].data) == SpendWallet.applyGrant.selector) {
+                        i = j;
+                        break;
+                    }
+                }
+                late.push(q[i]);
+                _removeAt(i);
+                delayed++;
+            }
+        } else if (op == 10) {
+            // release up to 8 held-back messages in random order (skipping chains still cut off),
+            // possibly long after STOP/unstop or a day change
+            for (uint256 k; k < 8 && late.length > 0; k++) {
+                uint256 i = uint256(keccak256(abi.encode(r, k))) % late.length;
+                Msg memory m = late[i];
+                if (m.toWallet && block.timestamp < partitionUntil[m.chain]) continue;
+                if (q.length >= MAX_QUEUE) break;
+                q.push(m);
+                late[i] = late[late.length - 1];
+                late.pop();
+            }
+        } else if (op == 14) {
+            // a destination chain is unreachable for 1-30 min (proxy down, congestion, payer in
+            // debt): every callback to it is held back, then released out of order
+            uint8 c = uint8(r % N);
+            partitionUntil[c] = uint64(block.timestamp + _bound(r >> 8, 60, 1800));
+            partitions++;
+        } else {
+            // late redelivery of something already delivered
+            if (hcount > 0 && q.length < MAX_QUEUE) {
+                uint256 n = hcount < 64 ? hcount : 64;
+                q.push(history[r % n]);
+                replayed++;
+            }
         }
     }
 
@@ -299,7 +350,13 @@ contract NetworkHandler is Test {
         Msg memory m = q[i];
         _removeAt(i);
         delivered++;
+        history[hcount % 64] = m;
+        hcount++;
         if (m.toWallet) {
+            if (bytes4(m.data) == SpendWallet.applyGrant.selector) {
+                (uint256 gid,,, uint64 ge) = abi.decode(_tail(m.data), (uint256, uint64, uint256, uint64));
+                if (ge < gEpoch[m.chain] && !gFrozen[m.chain] && !wallets[m.chain].seen(gid)) freshStaleUnfrozen++;
+            }
             (bool ok,) = _run(address(wallets[m.chain]), BRIDGE, m.data);
             if (ok) _ghostOnWallet(m.chain, m.data);
         } else {
@@ -358,6 +415,10 @@ contract NetworkHandler is Test {
     }
 
     function _push(bool toWallet, uint8 c, bytes memory data) internal {
+        if (toWallet && block.timestamp < partitionUntil[c] && late.length < 64) {
+            late.push(Msg(toWallet, c, data));
+            return;
+        }
         if (q.length >= MAX_QUEUE) return; // a full network queue loses messages
         q.push(Msg(toWallet, c, data));
         if (q.length > maxQueue) maxQueue = q.length;
@@ -424,6 +485,10 @@ contract NetworkHandler is Test {
         bytes memory args = _tail(cd);
         if (sel == SpendWallet.applyGrant.selector) {
             (uint256 id,, uint256 amount, uint64 e) = abi.decode(args, (uint256, uint64, uint256, uint64));
+            if (e < gEpoch[c]) {
+                staleGrants++;
+                if (!gFrozen[c]) staleGrantsUnfrozen++;
+            }
             if (e > gEpoch[c]) _gRoll(c, e);
             if (e == gEpoch[c] && !gFrozen[c] && !gCounted[id]) {
                 gCounted[id] = true;
@@ -445,19 +510,24 @@ contract NetworkHandler is Test {
         gFrozen[c] = gPressMark[c] > gPressAcked[c];
     }
 
-    /// Invariant (b), checked after every action from real token outflows:
-    ///  - nothing leaves a wallet while STOP is in effect on its chain;
-    ///  - after the wallet enters a new epoch, it spends no more than the grants of that epoch
-    ///    (so no allowance from an older epoch is ever spent).
+    /// Invariant (b), checked after every action:
+    ///  - from real token outflows: nothing leaves a wallet while STOP is in effect on its chain,
+    ///    and after the wallet enters a new epoch it pays out no more than that epoch's grants;
+    ///  - stricter: after an epoch change no older-epoch allowance is even spendable
+    ///    (unspent + paid since the change <= grants of the new epoch).
     function _checkStops() internal {
         for (uint8 c; c < N; c++) {
             uint256 tot = tokens[c].outflowTotal(address(wallets[c]));
             uint256 delta = tot - gOutSeen[c];
-            if (delta == 0) continue;
-            gOutSeen[c] = tot;
-            if (gFrozen[c]) _violate("paid while STOP in effect");
-            gOutSinceRoll[c] += delta;
-            if (gOutSinceRoll[c] > gGrantSinceRoll[c]) _violate("spent allowance from an older epoch");
+            if (delta > 0) {
+                gOutSeen[c] = tot;
+                if (gFrozen[c]) _violate("paid while STOP in effect");
+                gOutSinceRoll[c] += delta;
+                if (gOutSinceRoll[c] > gGrantSinceRoll[c]) _violate("paid from an older epoch's allowance");
+            }
+            if (wallets[c].liveUnspent() + gOutSinceRoll[c] > gGrantSinceRoll[c]) {
+                _violate("older epoch's allowance still spendable");
+            }
         }
     }
 
