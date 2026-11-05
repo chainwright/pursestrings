@@ -93,9 +93,11 @@ contract MutantCore is BudgetCoreHarness {
 
     function _onMatured(bytes32 k) internal override {
         if (m == MutantIds.CORE_WAIT_WITHOUT_REREAD) {
+            // Credit once the wait has passed, never re-reading. The entry stays in the list
+            // (marked credited) because the core is scanning that list right now.
+            if (credited[k]) return;
             Pending memory p = pending[k];
             credited[k] = true;
-            _dropPending(k);
             _creditUnchecked(p.kind, p.chain, p.id, p.day, p.amount, p.amount2);
             return;
         }
