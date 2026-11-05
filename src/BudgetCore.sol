@@ -177,7 +177,7 @@ abstract contract BudgetCore {
         _poke();
     }
 
-    function _onGrantApplied(uint8 c, uint256 grantId) internal {
+    function _onGrantApplied(uint8 c, uint256 grantId) internal virtual {
         Grant storage g = grants[grantId];
         if (g.st != 0 && g.chain == c && (g.st == G_SENT || g.st == G_CANCELLING)) g.st = G_APPLIED;
         _poke();
@@ -248,7 +248,7 @@ abstract contract BudgetCore {
             if (!v.ok) {
                 if (v.kind == K_RECLAIM) _closeReclaim(v.key);
                 _dropPending(k); // the fact is gone (reorged out); a real re-occurrence is re-admitted
-            } else if (v.ts >= v.appliedAt + confirmWait) {
+            } else if (_oldEnough(c, v)) {
                 if (v.kind == K_RECLAIM) {
                     _closeReclaim(v.key);
                     _credit(K_RECLAIM, c, p.day, v.a0);
@@ -273,7 +273,7 @@ abstract contract BudgetCore {
     /// Owner config, from the home-chain console. A raise applies at once, also to open days;
     /// a decrease applies to days not yet opened (at the latest d+2, since d+1 may be pre-granted).
     function _onCapSet(uint64 nonce, uint256 newCap) internal {
-        if (nonce > capNonce) {
+        if (_newerCap(nonce)) {
             capNonce = nonce;
             uint64 t = _today();
             for (uint64 d = t; d <= t + 1; d++) {
@@ -291,7 +291,7 @@ abstract contract BudgetCore {
     function _onUnstop(uint64 nonce, uint64 e) internal {
         if (nonce > unstopNonce) {
             unstopNonce = nonce;
-            if (frozen && e == epoch) {
+            if (frozen && _unstopLifts(e)) {
                 epoch++;
                 frozen = false;
                 emit Unfrozen(epoch);
@@ -315,7 +315,7 @@ abstract contract BudgetCore {
         // 1. returns old enough to confirm: ask the origin chain to re-read the fact
         for (uint256 i = _pendingKeys.length; i > 0; i--) {
             bytes32 k = _pendingKeys[i - 1];
-            if (nowTs >= pending[k].originTs + confirmWait) _onMatured(k);
+            if (_waitPassed(k, nowTs)) _onMatured(k);
         }
 
         // 2. grants never acknowledged: cancel (refund only on a confirmed tombstone)
@@ -405,7 +405,7 @@ abstract contract BudgetCore {
 
     // ============================================================ actions
 
-    function _grant(uint8 c, uint64 d, uint256 amount) internal {
+    function _grant(uint8 c, uint64 d, uint256 amount) internal virtual {
         DayBook storage b = _days[d];
         b.pool -= amount; // rule 1: debit before sending
         b.held[c] += amount;
@@ -452,7 +452,7 @@ abstract contract BudgetCore {
         }
         _lastEpochSent[c] = epoch;
         epochSentAt[c] = uint64(block.timestamp);
-        _dispatch(c, abi.encodeCall(IWalletInbox.applyEpoch, (epoch, frozen, pressSeenAt[c])));
+        _dispatch(c, _epochMessage(c));
     }
 
     /// A claimed return enters the books only as pending (rule 2).
@@ -485,6 +485,36 @@ abstract contract BudgetCore {
 
     function _alreadyCredited(bytes32 k) internal view virtual returns (bool) {
         return credited[k];
+    }
+
+    // Policy steps, kept separate so each rule can be broken on purpose in the mutation suite.
+
+    /// Rule 2: a re-read counts only if the fact had existed for the whole confirmation wait when
+    /// it was read (both times from the origin chain's clock). This is the safety check.
+    function _oldEnough(uint8, Echo memory v) internal view virtual returns (bool) {
+        return v.ts >= v.appliedAt + confirmWait;
+    }
+
+    /// Rule 2, cost: don't ask for a re-read before the fact can be old enough. Not needed for
+    /// safety (_oldEnough is), but an early re-read is a billed callback that can only fail.
+    function _waitPassed(bytes32 k, uint64 nowTs) internal view virtual returns (bool) {
+        return nowTs >= pending[k].originTs + confirmWait;
+    }
+
+    /// An unstop lifts only the frozen epoch it names.
+    function _unstopLifts(uint64 e) internal view virtual returns (bool) {
+        return e == epoch;
+    }
+
+    /// Owner cap messages apply in nonce order; an older one delivered late is ignored.
+    function _newerCap(uint64 nonce) internal view virtual returns (bool) {
+        return nonce > capNonce;
+    }
+
+    /// The freeze/unfreeze message: the epoch, whether it is frozen, and the newest local press
+    /// on that chain the coordinator has seen.
+    function _epochMessage(uint8 c) internal view virtual returns (bytes memory) {
+        return abi.encodeCall(IWalletInbox.applyEpoch, (epoch, frozen, pressSeenAt[c]));
     }
 
     /// Moves a confirmed return from a chain's holding back to the day's pool. Clamped, so the

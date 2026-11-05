@@ -212,20 +212,19 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
         emit GrantApplied(id, d, amount, uint64(block.timestamp));
     }
 
-    /// Shrinks only unspent allowance, and never below keepFloor.
-    function applyReclaim(uint256 id, uint64 day, uint256 amount) external onlyBridge {
+    /// Rule 3: shrinks only unspent allowance, and never below keepFloor. Records and reports
+    /// exactly the allowance it gave up, which is what goes back to the vault.
+    function applyReclaim(uint256 id, uint64 day, uint256 amount) public virtual onlyBridge {
         _sweep();
         if (!_fresh(id)) return;
         seen[id] = true;
         Bucket storage b = buckets[day];
-        uint256 avail = _reclaimable(b);
-        uint256 z = avail > keepFloor ? _min(amount, avail - keepFloor) : 0;
         uint256 unspent = b.allowance - b.spent;
-        uint256 back = z <= unspent ? z : unspent;
+        uint256 back = unspent > keepFloor ? _min(amount, unspent - keepFloor) : 0;
         b.allowance -= uint128(back);
-        reclaimRec[id] = ReclaimRec(day, uint64(block.timestamp), uint128(z));
+        reclaimRec[id] = ReclaimRec(day, uint64(block.timestamp), uint128(back));
         if (back > 0) _toVault(back);
-        emit Reclaimed(id, day, z, uint64(block.timestamp));
+        emit Reclaimed(id, day, back, uint64(block.timestamp));
     }
 
     /// Tombstones the grant first if it never arrived, so it can never apply afterwards.
@@ -364,11 +363,6 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
     /// Rule 4 (wallet side): each coordinator message id applies at most once.
     function _fresh(uint256 id) internal view virtual returns (bool) {
         return !seen[id];
-    }
-
-    /// Rule 3: a reclaim may take only what is unspent.
-    function _reclaimable(Bucket storage b) internal view virtual returns (uint256) {
-        return b.allowance - b.spent;
     }
 
     /// Rule 6: a grant from an older epoch is refused on arrival.
