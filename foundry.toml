@@ -6,6 +6,7 @@ solc_version = "0.8.29"
 evm_version = "cancun"
 optimizer = true
 optimizer_runs = 200
+gas_limit = "18446744073709551615"
 
 [invariant]
 runs = 128
@@ -14,3 +15,6 @@ fail_on_revert = false
 
 [fuzz]
 runs = 256
+
+[lint]
+lint_on_build = false
