@@ -38,9 +38,7 @@ interface IWalletEvents {
     event Rolled(uint64 indexed epoch, uint64 day, uint256 today, uint256 tomorrow, uint64 ts);
     event EpochAck(uint64 indexed epoch, bool frozen, uint64 ts);
     event StopPressed(uint64 mark);
-    event Verified(
-        uint8 kind, uint256 key, bool ok, uint64 day, uint256 a0, uint256 a1, uint64 appliedAt, uint64 ts
-    );
+    event Verified(uint8 kind, uint256 key, bool ok, uint64 day, uint256 a0, uint256 a1, uint64 appliedAt, uint64 ts);
 
     // Local only (not subscribed by the reactive contract).
     event Paid(bytes32 indexed callId, address indexed payee, uint256 amount, uint64 day, uint64 epoch);

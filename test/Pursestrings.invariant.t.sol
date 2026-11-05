@@ -186,7 +186,12 @@ contract PursestringsCoverageWalk is Test {
         console2.log("days crossed / outages", h.daysCrossed(), h.outages());
         console2.log("pays ok / refused", h.paysOk(), h.paysRefused());
         console2.log("delivered / dropped", h.delivered(), h.dropped());
-        console2.log("duplicated / reorged (all) / of them on a branch that lived", h.duplicated(), h.orphaned(), h.delayedReorgs());
+        console2.log(
+            "duplicated / reorged (all) / of them on a branch that lived",
+            h.duplicated(),
+            h.orphaned(),
+            h.delayedReorgs()
+        );
         console2.log("re-reads served from a competing branch", h.branchReads());
         console2.log("heals / of them with the owner's STOP in force", h.heals(), h.healsWhileStopped());
         console2.log("stops / unstops", h.stops(), h.unstops());

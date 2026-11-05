@@ -3,11 +3,17 @@ pragma solidity ^0.8.29;
 import {Test, console2} from "forge-std/Test.sol";
 import {NetworkHandler} from "./harness/NetworkHandler.sol";
 import {BudgetCoreHarness} from "./harness/BudgetCoreHarness.sol";
+
 /// Not a pass/fail test: measures how often the liveness model is non-vacuous and how many
 /// refused retry rounds a short chain waits while budget exists (numbers for SPIKE_RESULT.md).
 contract LivenessStats is Test {
     function test_livenessStats() public {
-        uint256 availRetries; uint256 servedAvail; uint256 shortRuns; uint256 reclaimRuns; uint256 maxStreak; uint256[6] memory hist;
+        uint256 availRetries;
+        uint256 servedAvail;
+        uint256 shortRuns;
+        uint256 reclaimRuns;
+        uint256 maxStreak;
+        uint256[6] memory hist;
         for (uint256 seed; seed < 400; seed++) {
             uint256[3] memory streak;
             vm.warp(1_800_000_000 - (1_800_000_000 % 1 days) + 6 hours);
@@ -26,14 +32,26 @@ contract LivenessStats is Test {
             for (uint256 round; round < 20; round++) {
                 for (uint8 c; c < 3; c++) {
                     uint256 need = h.lastNeed(c);
-                    if (need == 0) { streak[c] = 0; continue; }
+                    if (need == 0) {
+                        streak[c] = 0;
+                        continue;
+                    }
                     anyShort = true;
                     bool avail = _slack(h, c) >= need;
                     bool ok = h.payExact(c, need);
-                    if (avail) { availRetries++; if (ok) servedAvail++; }
-                    if (ok) { if (streak[c] > 0) hist[streak[c] > 5 ? 5 : streak[c]]++; streak[c] = 0; }
-                    else if (avail) { streak[c]++; if (streak[c] > maxStreak) maxStreak = streak[c]; }
-                    else streak[c] = 0;
+                    if (avail) {
+                        availRetries++;
+                        if (ok) servedAvail++;
+                    }
+                    if (ok) {
+                        if (streak[c] > 0) hist[streak[c] > 5 ? 5 : streak[c]]++;
+                        streak[c] = 0;
+                    } else if (avail) {
+                        streak[c]++;
+                        if (streak[c] > maxStreak) maxStreak = streak[c];
+                    } else {
+                        streak[c] = 0;
+                    }
                 }
                 h.settleFor(5);
             }
@@ -47,9 +65,15 @@ contract LivenessStats is Test {
         console2.log("runs with reclaims", reclaimRuns);
         console2.log("retries with budget available / served", availRetries, servedAvail);
     }
+
     function _slack(NetworkHandler h, uint8 c) internal view returns (uint256 slack) {
-        BudgetCoreHarness core = h.core(); uint64 t = core.today();
+        BudgetCoreHarness core = h.core();
+        uint64 t = core.today();
         slack = h.wallets(c).unspentOf(t) + core.poolOf(t);
-        for (uint8 j; j < 3; j++) { if (j == c || h.lastNeed(j) > 0) continue; uint256 u = h.wallets(j).unspentOf(t); if (u > h.FLOOR()) slack += u - h.FLOOR(); }
+        for (uint8 j; j < 3; j++) {
+            if (j == c || h.lastNeed(j) > 0) continue;
+            uint256 u = h.wallets(j).unspentOf(t);
+            if (u > h.FLOOR()) slack += u - h.FLOOR();
+        }
     }
 }
