@@ -20,7 +20,15 @@ contract MockToken {
         vaultOf[wallet] = vault;
     }
 
+    /// Test fault: transfers to these addresses revert (e.g. a blacklisted vault).
+    mapping(address => bool) public blocked;
+
+    function setBlocked(address a, bool b) external {
+        blocked[a] = b;
+    }
+
     function transfer(address to, uint256 amount) external returns (bool) {
+        require(!blocked[to], "blocked");
         require(balanceOf[msg.sender] >= amount, "balance");
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;

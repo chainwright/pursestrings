@@ -5,38 +5,59 @@ import {BudgetCore} from "../BudgetCore.sol";
 import {IWalletEvents, IConsoleEvents} from "../interfaces/IPursestrings.sol";
 import {LogRecord, CallbackConfiguration_V_1_0, IReactiveSystem} from "./IReactiveMirror.sol";
 import {CallbackFront} from "./CallbackFront.sol";
+import {Payer} from "./Payer.sol";
 
 /// The reactive contract on Lasna: BudgetCore plus the Reactive glue. It subscribes to the
-/// wallets' coordinator events and the home-chain console, decodes each LogRecord into one
-/// BudgetCore input, and turns every intent into a callback request to that chain's front.
-/// Not exercised against the real system contract yet (that is the W1 live-loop step).
-contract PursestringsReactive is BudgetCore {
+/// wallets' coordinator events, the home-chain console and a Cron topic, decodes each LogRecord
+/// into one BudgetCore input, and turns every intent into a callback request to that chain's
+/// front. Fees: reserves deposited with the system contract (`depositTo`) are used first; the
+/// system contract can also collect from this contract's balance with pay(), and anyone can
+/// clear a debt with coverDebt() (Payer). Not yet run against the real system contract.
+contract PursestringsReactive is BudgetCore, Payer {
     uint256 internal constant REACTIVE_IGNORE = 0xa65f96fc951c35ead38878e0f0b7a3c744a6f5ccc1476b313353ce31712313ad;
-    uint64 public constant CALLBACK_GAS = 300_000;
+    /// Cron events are emitted on Lasna by this address (DOCS_BRIEF §2).
+    address public constant CRON_SOURCE = 0x0000000000000000000000000000000000fffFfF;
+
+    struct Wiring {
+        IReactiveSystem system;
+        uint256 homeChainId;
+        address console;
+        uint256[] chainIds;
+        address[] wallets;
+        address[] fronts;
+        /// Callback gasLimit per chain. The proxy withholds extraGas + maxChargeGas from it, so it
+        /// must cover those plus the worst wallet entry (see TestnetConfig and test/Gas.t.sol).
+        uint64[] callbackGas;
+        /// Cron topic0 that drives retries, re-reads and pre-grants when no event arrives
+        /// (TestnetConfig.CRON1000). 0 = no Cron (tests only).
+        uint256 cronTopic;
+    }
 
     IReactiveSystem public immutable SYSTEM;
     uint256 public immutable homeChainId;
     address public immutable console;
+    uint256 public immutable cronTopic;
     uint256[] public chainIds;
     address[] public wallets;
     address[] public fronts;
+    uint64[] public callbackGas;
 
-    constructor(
-        Params memory p,
-        IReactiveSystem system_,
-        uint256 homeChainId_,
-        address console_,
-        uint256[] memory chainIds_,
-        address[] memory wallets_,
-        address[] memory fronts_
-    ) payable BudgetCore(p) {
-        require(chainIds_.length == p.nChains && wallets_.length == p.nChains && fronts_.length == p.nChains, "len");
-        SYSTEM = system_;
-        homeChainId = homeChainId_;
-        console = console_;
-        chainIds = chainIds_;
-        wallets = wallets_;
-        fronts = fronts_;
+    constructor(Params memory p, Wiring memory w) payable BudgetCore(p) {
+        uint256 n = p.nChains;
+        require(
+            w.chainIds.length == n && w.wallets.length == n && w.fronts.length == n && w.callbackGas.length == n, "len"
+        );
+        for (uint256 c; c < n; c++) {
+            require(w.callbackGas[c] >= 100_000, "callback gas below the network minimum");
+        }
+        SYSTEM = w.system;
+        homeChainId = w.homeChainId;
+        console = w.console;
+        cronTopic = w.cronTopic;
+        chainIds = w.chainIds;
+        wallets = w.wallets;
+        fronts = w.fronts;
+        callbackGas = w.callbackGas;
 
         bytes32[10] memory topics = [
             IWalletEvents.Short.selector,
@@ -50,25 +71,51 @@ contract PursestringsReactive is BudgetCore {
             IWalletEvents.StopPressed.selector,
             IWalletEvents.Verified.selector
         ];
-        for (uint256 c; c < chainIds_.length; c++) {
+        for (uint256 c; c < n; c++) {
             for (uint256 k; k < topics.length; k++) {
-                system_.subscribe(
-                    chainIds_[c], wallets_[c], uint256(topics[k]), REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
-                );
+                w.system
+                    .subscribe(
+                        w.chainIds[c],
+                        w.wallets[c],
+                        uint256(topics[k]),
+                        REACTIVE_IGNORE,
+                        REACTIVE_IGNORE,
+                        REACTIVE_IGNORE
+                    );
             }
         }
-        system_.subscribe(
-            homeChainId_, console_, uint256(IConsoleEvents.CapSet.selector), REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
-        );
-        system_.subscribe(
-            homeChainId_, console_, uint256(IConsoleEvents.Unstop.selector), REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
-        );
+        w.system
+            .subscribe(
+                w.homeChainId,
+                w.console,
+                uint256(IConsoleEvents.CapSet.selector),
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE
+            );
+        w.system
+            .subscribe(
+                w.homeChainId,
+                w.console,
+                uint256(IConsoleEvents.Unstop.selector),
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE
+            );
+        if (w.cronTopic != 0) {
+            w.system
+                .subscribe(block.chainid, CRON_SOURCE, w.cronTopic, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE);
+        }
     }
 
     /// Never filter by reverting: a revert in react() is still billed. Unknown logs are ignored.
     function react(LogRecord calldata log) external {
         require(msg.sender == address(SYSTEM), "system");
         bytes32 t0 = bytes32(log.topic0);
+        if (log.contractAddress == CRON_SOURCE && log.chainId == block.chainid) {
+            if (cronTopic != 0 && log.topic0 == cronTopic) _onTick();
+            return;
+        }
         if (log.chainId == homeChainId && log.contractAddress == console) {
             if (t0 == IConsoleEvents.CapSet.selector) {
                 (uint64 nonce, uint256 nc) = abi.decode(log.data, (uint64, uint256));
@@ -124,9 +171,13 @@ contract PursestringsReactive is BudgetCore {
             CallbackConfiguration_V_1_0({
                 chainId: chainIds[c],
                 recipient: fronts[c],
-                gasLimit: CALLBACK_GAS,
+                gasLimit: callbackGas[c],
                 payload: abi.encodeCall(CallbackFront.deliver, (address(0), payload))
             })
         );
+    }
+
+    function _vendor() internal view override returns (address) {
+        return address(SYSTEM);
     }
 }

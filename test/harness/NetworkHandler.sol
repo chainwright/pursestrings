@@ -135,11 +135,18 @@ contract NetworkHandler is Test {
     constructor(uint256 mutant, bool chaos_) {
         chaosOn = chaos_;
         startDay = uint64(block.timestamp / 1 days);
+        // Model time is compressed: waits of 1-3 min per chain (production: 16-30 min, see
+        // TestnetConfig). What the model keeps is the relation the design rests on: every reorg
+        // window is shorter than its chain's wait.
+        uint64[] memory waits = new uint64[](N);
+        waits[0] = 60;
+        waits[1] = 90;
+        waits[2] = 180;
         BudgetCore.Params memory p = BudgetCore.Params({
             nChains: N,
             cap: CAP,
             keepFloor: FLOOR,
-            confirmWait: 60,
+            confirmWaits: waits,
             grantTimeout: 300,
             reclaimTimeout: 300,
             verifyTimeout: 120,
@@ -564,9 +571,7 @@ contract NetworkHandler is Test {
             if (window > 0) {
                 _pruneBranches();
                 if (branches.length < 16) {
-                    branches.push(
-                        Branch(m.chain, uint64(block.timestamp), uint64(block.timestamp + window), m.data)
-                    );
+                    branches.push(Branch(m.chain, uint64(block.timestamp), uint64(block.timestamp + window), m.data));
                 }
                 delayedReorgs++;
             }
@@ -620,8 +625,8 @@ contract NetworkHandler is Test {
     function _deliverAt(uint256 i) internal {
         Msg memory m = q[i];
         _removeAt(i);
-        bool onBranch = chaosOn && m.toWallet && bytes4(m.data) == SpendWallet.verify.selector
-            && _branchAlive(m.chain) && uint256(keccak256(abi.encode(delivered, block.timestamp))) % 2 == 0;
+        bool onBranch = chaosOn && m.toWallet && bytes4(m.data) == SpendWallet.verify.selector && _branchAlive(m.chain)
+            && uint256(keccak256(abi.encode(delivered, block.timestamp))) % 2 == 0;
         _deliver(m, onBranch);
     }
 
@@ -751,8 +756,8 @@ contract NetworkHandler is Test {
         revert("no such message queued");
     }
 
-    function _wait(uint8) internal view returns (uint64) {
-        return core.confirmWait();
+    function _wait(uint8 c) internal view returns (uint64) {
+        return core.confirmWaitOf(c);
     }
 
     function _feedCore(uint8 c, bytes memory enc) internal {
@@ -862,7 +867,9 @@ contract NetworkHandler is Test {
         if (ownerStopped()) healsWhileStopped++;
         uint64 e = core.epoch();
         for (uint8 c; c < N; c++) {
-            if (wallets[c].epoch() != e) _violateStop("(s) a wallet is still on an older epoch after the network healed");
+            if (wallets[c].epoch() != e) {
+                _violateStop("(s) a wallet is still on an older epoch after the network healed");
+            }
         }
         if (!ownerStopped()) return;
         if (!core.frozen()) _violateStop("(s) the owner's STOP was lifted by an unstop issued before it");

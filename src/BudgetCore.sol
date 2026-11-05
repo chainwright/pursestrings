@@ -31,7 +31,9 @@ abstract contract BudgetCore {
         uint8 nChains;
         uint256 cap;
         uint256 keepFloor;
-        uint64 confirmWait;
+        /// Per chain: how long a return must have existed on its origin chain before it is
+        /// credited. Must exceed that chain's reorg window (see TestnetConfig).
+        uint64[] confirmWaits;
         uint64 grantTimeout;
         uint64 reclaimTimeout;
         uint64 verifyTimeout;
@@ -51,10 +53,11 @@ abstract contract BudgetCore {
         uint64 ts;
     }
 
+    /// cap, pool and open share one storage slot (opening a day is one write, not three).
     struct DayBook {
+        uint128 cap;
+        uint120 pool;
         bool open;
-        uint256 cap;
-        uint256 pool;
         mapping(uint8 => uint256) held;
         mapping(uint8 => bool) dry;
     }
@@ -97,9 +100,19 @@ abstract contract BudgetCore {
         uint128 amount;
     }
 
+    /// Work bounds per call (one react()): at most MAX_SENDS callback requests, and at most SCAN
+    /// entries of each retry list looked at; the rest is carried to the next call (Cron tick or
+    /// event). STOP/unstop messages go first. Gas measured in test/Gas.t.sol.
+    uint256 public constant MAX_SENDS = 4;
+    uint256 public constant SCAN = 4;
+    /// Caps above this are treated as this (it is ~1.3e36 base units; it only bounds packing).
+    uint256 public constant MAX_CAP = type(uint120).max;
+    /// New grants are refused while this many are unacknowledged (e.g. a destination chain is
+    /// dead), so the retry lists can't grow without bound.
+    uint256 public constant MAX_LIVE_GRANTS = 32;
+
     uint8 public immutable nChains;
     uint256 public immutable keepFloor;
-    uint64 public immutable confirmWait;
     uint64 public immutable grantTimeout;
     uint64 public immutable reclaimTimeout;
     uint64 public immutable verifyTimeout;
@@ -117,6 +130,7 @@ abstract contract BudgetCore {
     mapping(uint8 => uint64) public epochSentAt;
     mapping(uint8 => uint8) public epochTries;
     mapping(uint8 => uint64) internal _lastEpochSent;
+    mapping(uint8 => uint64) public confirmWaitOf;
 
     mapping(uint64 => DayBook) internal _days;
 
@@ -135,6 +149,15 @@ abstract contract BudgetCore {
     mapping(uint8 => Want) public want;
     uint8 internal _rr;
 
+    /// Callback requests still allowed in this call, plus one (never stored as zero, so resetting
+    /// it each call is a cheap non-zero write).
+    uint256 internal _sendsLeft = 1;
+    uint256 internal _pCur;
+    uint256 internal _gCur;
+    uint256 internal _rCur;
+    /// day => bit per chain already pre-granted for that day
+    mapping(uint64 => uint256) internal _pregranted;
+
     event DayOpened(uint64 day, uint256 cap);
     event GrantSent(uint256 id, uint8 chain, uint64 day, uint256 amount, uint64 epoch);
     event ReclaimSent(uint256 id, uint8 chain, uint64 day, uint256 amount);
@@ -144,11 +167,15 @@ abstract contract BudgetCore {
     event Unfrozen(uint64 epoch);
 
     constructor(Params memory p) {
-        require(p.nChains > 0 && p.nChains <= 16, "chains");
+        // STOP reaches every chain in the same call: one epoch message per chain fits the budget.
+        require(p.nChains > 0 && p.nChains <= MAX_SENDS, "chains");
+        require(p.confirmWaits.length == p.nChains, "waits");
         nChains = p.nChains;
-        cap = p.cap;
+        cap = p.cap < MAX_CAP ? p.cap : MAX_CAP;
         keepFloor = p.keepFloor;
-        confirmWait = p.confirmWait;
+        for (uint8 c; c < p.nChains; c++) {
+            confirmWaitOf[c] = p.confirmWaits[c];
+        }
         grantTimeout = p.grantTimeout;
         reclaimTimeout = p.reclaimTimeout;
         verifyTimeout = p.verifyTimeout;
@@ -233,10 +260,7 @@ abstract contract BudgetCore {
             for (uint8 i; i < nChains; i++) {
                 delete want[i];
             }
-            emit Frozen(epoch);
-            for (uint8 i; i < nChains; i++) {
-                _sendEpoch(i);
-            }
+            emit Frozen(epoch); // the epoch messages go out first thing in _poke()
         }
         _poke();
     }
@@ -273,14 +297,15 @@ abstract contract BudgetCore {
     /// Owner config, from the home-chain console. A raise applies at once, also to open days;
     /// a decrease applies to days not yet opened (at the latest d+2, since d+1 may be pre-granted).
     function _onCapSet(uint64 nonce, uint256 newCap) internal {
+        if (newCap > MAX_CAP) newCap = MAX_CAP;
         if (_newerCap(nonce)) {
             capNonce = nonce;
             uint64 t = _today();
             for (uint64 d = t; d <= t + 1; d++) {
                 DayBook storage b = _days[d];
                 if (b.open && newCap > b.cap) {
-                    b.pool += newCap - b.cap;
-                    b.cap = newCap;
+                    b.pool += uint120(newCap - b.cap);
+                    b.cap = uint128(newCap);
                 }
             }
             cap = newCap;
@@ -295,9 +320,6 @@ abstract contract BudgetCore {
                 epoch++;
                 frozen = false;
                 emit Unfrozen(epoch);
-                for (uint8 i; i < nChains; i++) {
-                    _sendEpoch(i);
-                }
             }
         }
         _poke();
@@ -310,55 +332,93 @@ abstract contract BudgetCore {
     // ============================================================== the loop
 
     function _poke() internal {
+        _sendsLeft = MAX_SENDS + 1;
         uint64 nowTs = uint64(block.timestamp);
 
-        // 1. returns old enough to confirm: ask the origin chain to re-read the fact
-        for (uint256 i = _pendingKeys.length; i > 0; i--) {
-            bytes32 k = _pendingKeys[i - 1];
-            if (_waitPassed(k, nowTs)) _onMatured(k);
-        }
-
-        // 2. grants never acknowledged: cancel (refund only on a confirmed tombstone)
-        for (uint256 i = _liveGrants.length; i > 0; i--) {
-            uint256 id = _liveGrants[i - 1];
-            Grant storage g = grants[id];
-            if (g.st == G_APPLIED || g.st == G_REFUNDED) {
-                _removeAt(_liveGrants, i - 1);
-            } else if (
-                nowTs >= g.sentAt + _backoff(grantTimeout, g.tries) && pending[_key(K_VOID, g.chain, id)].kind == 0
-            ) {
-                _sendCancel(id);
-            }
-        }
-
-        // 3. reclaims never answered: close, so the donor can be asked again with a new id
-        for (uint256 i = _liveReclaims.length; i > 0; i--) {
-            uint256 id = _liveReclaims[i - 1];
-            Reclaim storage r = reclaims[id];
-            if (r.open && nowTs >= r.sentAt + reclaimTimeout) _closeReclaim(id);
-            if (!r.open) _removeAt(_liveReclaims, i - 1);
-        }
-
-        // 4. epoch (freeze/unfreeze) not yet confirmed on a chain: re-send
+        // 1. epoch (freeze/unfreeze) not yet confirmed on a chain: a new epoch goes out at once,
+        //    a resend after its backoff. First, so STOP never waits behind other work.
         for (uint8 c; c < nChains; c++) {
-            if (epochAcked[c] < epoch && nowTs >= epochSentAt[c] + _backoff(grantTimeout, epochTries[c])) {
+            if (epochAcked[c] >= epoch) continue;
+            bool fresh = _lastEpochSent[c] != epoch;
+            if (fresh || nowTs >= epochSentAt[c] + _backoff(grantTimeout, epochTries[c])) {
+                if (!_canSend()) break;
                 _sendEpoch(c);
             }
         }
 
+        // 2. returns old enough to confirm: ask the origin chain to re-read the fact
+        uint256 n = _pendingKeys.length;
+        if (n > 0) {
+            uint256 i = _pCur % n;
+            for (uint256 s; s < SCAN && s < n; s++) {
+                bytes32 k = _pendingKeys[i];
+                if (_waitPassed(k, nowTs)) {
+                    if (!_canSend()) break;
+                    _onMatured(k);
+                }
+                i = (i + 1) % n;
+            }
+            _pCur = i;
+        }
+
+        // 3. grants never acknowledged: cancel (refund only on a confirmed tombstone)
+        n = _liveGrants.length;
+        {
+            uint256 i = _gCur;
+            for (uint256 s; s < SCAN && n > 0; s++) {
+                if (i >= n) i = 0;
+                uint256 id = _liveGrants[i];
+                Grant storage g = grants[id];
+                if (g.st == G_APPLIED || g.st == G_REFUNDED) {
+                    _removeAt(_liveGrants, i);
+                    n--;
+                    continue;
+                }
+                if (nowTs >= g.sentAt + _backoff(grantTimeout, g.tries) && pending[_key(K_VOID, g.chain, id)].kind == 0)
+                {
+                    if (!_canSend()) break;
+                    _sendCancel(id);
+                }
+                i++;
+            }
+            _gCur = i;
+        }
+
+        // 4. reclaims never answered: close, so the donor can be asked again with a new id
+        n = _liveReclaims.length;
+        {
+            uint256 i = _rCur;
+            for (uint256 s; s < SCAN && n > 0; s++) {
+                if (i >= n) i = 0;
+                Reclaim storage r = reclaims[_liveReclaims[i]];
+                if (r.open && nowTs >= r.sentAt + reclaimTimeout) _closeReclaim(_liveReclaims[i]);
+                if (!r.open) {
+                    _removeAt(_liveReclaims, i);
+                    n--;
+                    continue;
+                }
+                i++;
+            }
+            _rCur = i;
+        }
+
         if (frozen) return;
 
-        // 5. open today; pre-grant tomorrow late in the day
+        // 5. open today; pre-grant tomorrow late in the day (one share per chain, once)
         uint64 t = _today();
         _open(t);
-        if (block.timestamp % DAY >= DAY - pregrantWindow && !_days[t + 1].open) {
-            _open(t + 1);
-            uint256 share = _days[t + 1].cap / (uint256(nChains) + 1);
-            if (share > 0) {
-                for (uint8 c; c < nChains; c++) {
-                    _grant(c, t + 1, share);
-                }
+        if (block.timestamp % DAY >= DAY - pregrantWindow) {
+            uint64 d = t + 1;
+            _open(d);
+            uint256 share = _days[d].cap / (uint256(nChains) + 1);
+            uint256 mask = _pregranted[d];
+            for (uint8 c; c < nChains && share > 0; c++) {
+                if (mask & (1 << c) != 0) continue;
+                if (!_canGrant()) break;
+                mask |= 1 << c;
+                _grant(c, d, share < _days[d].pool ? share : _days[d].pool);
             }
+            _pregranted[d] = mask;
         }
 
         // 6. serve the waiting list
@@ -376,6 +436,7 @@ abstract contract BudgetCore {
             Want storage w = want[c];
             uint256 need = w.amount;
             if (b.pool > 0) {
+                if (!_canGrant()) return;
                 uint256 give = need > chunk ? need : chunk;
                 if (give > b.pool) give = b.pool;
                 _grant(c, t, give);
@@ -388,9 +449,24 @@ abstract contract BudgetCore {
                 // reclaimed before its agent can spend it, and allowance circulates (ping-pong).
                 if (_askedRecently(j, t)) continue;
                 if (openReclaim[j][t] != 0 || b.dry[j] || b.held[j] <= keepFloor) continue;
+                if (!_canSend()) return;
                 _sendReclaim(j, t, w.amount);
             }
         }
+    }
+
+    function _canSend() internal view returns (bool) {
+        return _sendsLeft > 1;
+    }
+
+    function _canGrant() internal view returns (bool) {
+        return _sendsLeft > 1 && _liveGrants.length < MAX_LIVE_GRANTS;
+    }
+
+    /// Every outgoing message goes through here, so the per-call budget always holds.
+    function _send(uint8 c, bytes memory payload) internal {
+        if (_sendsLeft > 1) _sendsLeft--;
+        _dispatch(c, payload);
     }
 
     function _askedRecently(uint8 c, uint64 t) internal view returns (bool) {
@@ -407,14 +483,14 @@ abstract contract BudgetCore {
 
     function _grant(uint8 c, uint64 d, uint256 amount) internal virtual {
         DayBook storage b = _days[d];
-        b.pool -= amount; // rule 1: debit before sending
+        b.pool -= uint120(amount); // rule 1: debit before sending
         b.held[c] += amount;
         b.dry[c] = false;
         uint256 id = nextId++;
         grants[id] = Grant(c, G_SENT, 0, d, epoch, uint64(block.timestamp), uint128(amount));
         _liveGrants.push(id);
         emit GrantSent(id, c, d, amount, epoch);
-        _dispatch(c, abi.encodeCall(IWalletInbox.applyGrant, (id, d, amount, epoch)));
+        _send(c, abi.encodeCall(IWalletInbox.applyGrant, (id, d, amount, epoch)));
     }
 
     function _sendReclaim(uint8 c, uint64 d, uint256 amount) internal virtual returns (uint256 id) {
@@ -423,7 +499,7 @@ abstract contract BudgetCore {
         openReclaim[c][d] = id;
         _liveReclaims.push(id);
         emit ReclaimSent(id, c, d, amount);
-        _dispatch(c, abi.encodeCall(IWalletInbox.applyReclaim, (id, d, amount)));
+        _send(c, abi.encodeCall(IWalletInbox.applyReclaim, (id, d, amount)));
     }
 
     function _closeReclaim(uint256 id) internal {
@@ -440,7 +516,7 @@ abstract contract BudgetCore {
         g.sentAt = uint64(block.timestamp);
         uint256 id = nextId++;
         emit CancelSent(id, grantId);
-        _dispatch(g.chain, abi.encodeCall(IWalletInbox.applyCancel, (id, grantId)));
+        _send(g.chain, abi.encodeCall(IWalletInbox.applyCancel, (id, grantId)));
     }
 
     function _sendEpoch(uint8 c) internal {
@@ -452,14 +528,11 @@ abstract contract BudgetCore {
         }
         _lastEpochSent[c] = epoch;
         epochSentAt[c] = uint64(block.timestamp);
-        _dispatch(c, _epochMessage(c));
+        _send(c, _epochMessage(c));
     }
 
     /// A claimed return enters the books only as pending (rule 2).
-    function _admit(uint8 kind, uint8 c, uint256 id, uint64 day, uint256 a0, uint256 a1, uint64 ts)
-        internal
-        virtual
-    {
+    function _admit(uint8 kind, uint8 c, uint256 id, uint64 day, uint256 a0, uint256 a1, uint64 ts) internal virtual {
         bytes32 k = _key(kind, c, id);
         if (_alreadyCredited(k) || pending[k].kind != 0) return;
         pending[k] = Pending(kind, c, 0, day, ts, 0, id, uint128(a0), uint128(a1));
@@ -473,7 +546,7 @@ abstract contract BudgetCore {
         if (p.verifySentAt == 0 || block.timestamp >= p.verifySentAt + _backoff(verifyTimeout, p.tries)) {
             if (p.verifySentAt != 0 && p.tries < 255) p.tries++;
             p.verifySentAt = uint64(block.timestamp);
-            _dispatch(p.chain, abi.encodeCall(IWalletInbox.verify, (p.kind, p.id)));
+            _send(p.chain, abi.encodeCall(IWalletInbox.verify, (p.kind, p.id)));
         }
     }
 
@@ -491,14 +564,15 @@ abstract contract BudgetCore {
 
     /// Rule 2: a re-read counts only if the fact had existed for the whole confirmation wait when
     /// it was read (both times from the origin chain's clock). This is the safety check.
-    function _oldEnough(uint8, Echo memory v) internal view virtual returns (bool) {
-        return v.ts >= v.appliedAt + confirmWait;
+    function _oldEnough(uint8 c, Echo memory v) internal view virtual returns (bool) {
+        return v.ts >= v.appliedAt + confirmWaitOf[c];
     }
 
     /// Rule 2, cost: don't ask for a re-read before the fact can be old enough. Not needed for
     /// safety (_oldEnough is), but an early re-read is a billed callback that can only fail.
     function _waitPassed(bytes32 k, uint64 nowTs) internal view virtual returns (bool) {
-        return nowTs >= pending[k].originTs + confirmWait;
+        Pending storage p = pending[k];
+        return nowTs >= p.originTs + confirmWaitOf[p.chain];
     }
 
     /// An unstop lifts only the frozen epoch it names.
@@ -524,7 +598,7 @@ abstract contract BudgetCore {
         uint256 x = amount < b.held[c] ? amount : b.held[c];
         if (x == 0) return;
         b.held[c] -= x;
-        b.pool += x;
+        b.pool += uint120(x);
         emit Credited(kind, c, d, x);
     }
 
@@ -532,8 +606,8 @@ abstract contract BudgetCore {
         DayBook storage b = _days[d];
         if (!b.open) {
             b.open = true;
-            b.cap = cap;
-            b.pool = cap;
+            b.cap = uint128(cap);
+            b.pool = uint120(cap);
             emit DayOpened(d, cap);
         }
     }
@@ -565,7 +639,7 @@ abstract contract BudgetCore {
         return uint64(block.timestamp / DAY);
     }
 
-    /// Emit a message to chain `c`. Production: a Reactive callback request.
+    /// Emit a message to chain `c`. Production: a Reactive callback request. Call _send, not this.
     function _dispatch(uint8 c, bytes memory payload) internal virtual;
 
     // ================================================================ views

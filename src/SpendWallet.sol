@@ -2,9 +2,16 @@
 pragma solidity ^0.8.29;
 
 import {
-    IERC20Min, IWalletInbox, IWalletEvents, K_RECLAIM, K_VOID, K_ROLL, K_EPOCH
+    IERC20Min,
+    IWalletInbox,
+    IWalletEvents,
+    K_RECLAIM,
+    K_VOID,
+    K_ROLL,
+    K_EPOCH
 } from "./interfaces/IPursestrings.sol";
 import {Vault} from "./Vault.sol";
+import {SafeTransfer} from "./SafeTransfer.sol";
 
 /// One agent's wallet on one chain. Its budget-token balance backs its allowance: a grant pulls
 /// tokens from the local vault, a reclaim or sweep pushes them back. The only outflow to anyone
@@ -13,7 +20,14 @@ import {Vault} from "./Vault.sol";
 /// Allowance is kept per day bucket (today and, after a pre-grant, tomorrow). The wallet counts
 /// allowance, never balanceOf, so stray tokens sent here are not spendable.
 contract SpendWallet is IWalletInbox, IWalletEvents {
+    using SafeTransfer for IERC20Min;
+
     uint256 public constant DAY = 1 days;
+    /// Returns to the vault are best-effort: attempted only with at least this much gas left,
+    /// and the attempt itself may use all but FLUSH_KEEP. A failed or skipped return never undoes
+    /// the accounting (a freeze, a reclaim, a sweep): the tokens wait in `stranded`.
+    uint256 internal constant FLUSH_MIN_GAS = 90_000;
+    uint256 internal constant FLUSH_KEEP = 40_000;
 
     // pay() refusal reasons
     uint8 internal constant R_FROZEN = 1;
@@ -86,6 +100,8 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
     uint64 public constant SHORT_REARM = 300;
     mapping(uint64 => uint64) public shortAt; // day => time of the last Short (0 = armed)
     mapping(uint64 => bool) public lowFired;
+    /// Tokens owed back to the vault whose transfer hasn't happened yet. Never allowance.
+    uint256 public stranded;
 
     modifier onlyBridge() {
         require(msg.sender == bridge, "bridge");
@@ -137,7 +153,12 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
     /// Anything other than the budget token can leave only through the owner.
     function rescue(IERC20Min other, address to, uint256 amount) external onlyOwner {
         require(address(other) != address(token), "budget token leaves only via pay");
-        require(other.transfer(to, amount), "transfer");
+        other.safeTransfer(to, amount);
+    }
+
+    /// Anyone may retry returning stranded tokens to the vault.
+    function flush() external {
+        _flush();
     }
 
     // ------------------------------------------------------------------ agent
@@ -178,7 +199,8 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
             emit LowWater(d, left, uint64(block.timestamp));
         }
         emit Paid(callId, payee, amount, d, epoch);
-        require(token.transfer(payee, amount), "transfer");
+        token.safeTransfer(payee, amount);
+        _flush();
         return true;
     }
 
@@ -202,6 +224,7 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
             grantVoidAt[id] = uint64(block.timestamp);
             shortAt[t] = 0;
             emit GrantNotApplied(id, why, uint64(block.timestamp));
+            _flush();
             return;
         }
         _openDay(d);
@@ -210,6 +233,7 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
         shortAt[d] = 0;
         lowFired[d] = false;
         emit GrantApplied(id, d, amount, uint64(block.timestamp));
+        _flush();
     }
 
     /// Rule 3: shrinks only unspent allowance, and never below keepFloor. Records and reports
@@ -225,6 +249,7 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
         reclaimRec[id] = ReclaimRec(day, uint64(block.timestamp), uint128(back));
         if (back > 0) _toVault(back);
         emit Reclaimed(id, day, back, uint64(block.timestamp));
+        _flush();
     }
 
     /// Tombstones the grant first if it never arrived, so it can never apply afterwards.
@@ -242,18 +267,21 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
             shortAt[today()] = 0;
         }
         emit CancelAck(id, grantId, false, uint64(block.timestamp));
+        _flush();
     }
 
-    /// Freeze (frozen=true) or unfreeze for a newer epoch. Entering a newer epoch returns all
-    /// allowance of older epochs to the vault. A local press stays in force until the
-    /// coordinator acknowledges having seen it.
+    /// Freeze (frozen=true) or unfreeze for a newer epoch. Entering a newer epoch takes away
+    /// all allowance of older epochs. A local press stays in force until the coordinator
+    /// acknowledges having seen it. The freeze is pure state and is written before any token
+    /// moves; returning the tokens to the vault is best-effort and can't undo it.
     function applyEpoch(uint64 e, bool frozen_, uint64 pressSeenAt) external onlyBridge {
-        _sweep();
         if (e < epoch) return;
         if (pressSeenAt > pressAckedAt) pressAckedAt = pressSeenAt;
         if (e > epoch) _roll(e);
         frozen = frozen_ || lastPressAt > pressAckedAt;
         emit EpochAck(e, frozen, uint64(block.timestamp));
+        _sweep();
+        _flush();
     }
 
     /// Re-reads stored facts so the coordinator can credit only what is still true once the
@@ -295,7 +323,8 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
 
     // ------------------------------------------------------------- internals
 
-    /// First touch after local midnight: return leftovers of past days to the vault.
+    /// First touch after local midnight: leftovers of past days stop being allowance and are owed
+    /// back to the vault.
     function _sweep() internal {
         uint64 t = today();
         uint256 i;
@@ -345,8 +374,16 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
         _openDays.push(d);
     }
 
+    /// Accounting only: the tokens are owed to the vault from now on (see _flush).
     function _toVault(uint256 amount) internal {
-        require(token.transfer(address(vault), amount), "transfer");
+        stranded += amount;
+    }
+
+    /// Best-effort return of stranded tokens to the vault. Never reverts.
+    function _flush() internal {
+        uint256 amount = stranded;
+        if (amount == 0 || gasleft() < FLUSH_MIN_GAS) return;
+        if (token.tryTransfer(address(vault), amount, gasleft() - FLUSH_KEEP)) stranded = 0;
     }
 
     function _refuse(bytes32 callId, uint8 reason) internal returns (bool) {
@@ -380,8 +417,15 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
         return true;
     }
 
-    /// A grant applies only if its tokens actually arrive from the vault.
+    /// A grant applies only if its tokens actually arrive from the vault: the wallet measures its
+    /// own balance, so a token that delivers less than asked (fee-on-transfer) can't create
+    /// unbacked allowance. Whatever did arrive of a short delivery is owed back to the vault.
     function _pull(uint256 amount) internal virtual returns (bool) {
-        return vault.release(amount);
+        uint256 before = token.balanceOf(address(this));
+        if (!vault.release(amount)) return false;
+        uint256 got = token.balanceOf(address(this)) - before;
+        if (got >= amount) return true;
+        stranded += got;
+        return false;
     }
 }

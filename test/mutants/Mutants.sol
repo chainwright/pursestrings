@@ -4,9 +4,7 @@ pragma solidity ^0.8.29;
 import {BudgetCoreHarness} from "../harness/BudgetCoreHarness.sol";
 import {SpendWallet} from "../../src/SpendWallet.sol";
 import {Vault} from "../../src/Vault.sol";
-import {
-    IERC20Min, IWalletInbox, K_RECLAIM, K_VOID, K_ROLL, K_EPOCH
-} from "../../src/interfaces/IPursestrings.sol";
+import {IERC20Min, IWalletInbox, K_RECLAIM, K_VOID, K_ROLL, K_EPOCH} from "../../src/interfaces/IPursestrings.sol";
 
 /// Deliberately broken variants. Each breaks exactly one rule; the invariant suite must fail
 /// on every one of them. Selected with MUTANT=<n> (0 = the real contracts).
@@ -77,10 +75,7 @@ contract MutantCore is BudgetCoreHarness {
         }
     }
 
-    function _admit(uint8 kind, uint8 c, uint256 id, uint64 day, uint256 a0, uint256 a1, uint64 ts)
-        internal
-        override
-    {
+    function _admit(uint8 kind, uint8 c, uint256 id, uint64 day, uint256 a0, uint256 a1, uint64 ts) internal override {
         if (m == MutantIds.CORE_CREDIT_AT_HEAD) {
             bytes32 k = _key(kind, c, id);
             if (credited[k]) return;
@@ -116,7 +111,7 @@ contract MutantCore is BudgetCoreHarness {
         grants[id] = Grant(c, G_SENT, 0, d, epoch, uint64(block.timestamp), uint128(amount));
         _liveGrants.push(id);
         emit GrantSent(id, c, d, amount, epoch);
-        _dispatch(c, abi.encodeCall(IWalletInbox.applyGrant, (id, d, amount, epoch)));
+        _send(c, abi.encodeCall(IWalletInbox.applyGrant, (id, d, amount, epoch)));
     }
 
     function _onGrantApplied(uint8 c, uint256 grantId) internal override {
@@ -124,7 +119,7 @@ contract MutantCore is BudgetCoreHarness {
         if (m == MutantIds.CORE_DEBIT_ON_ACK && g.st == G_SENT && g.chain == c) {
             DayBook storage b = _days[g.day];
             uint256 x = g.amount < b.pool ? g.amount : b.pool;
-            b.pool -= x;
+            b.pool -= uint120(x);
             b.held[c] += x;
         }
         super._onGrantApplied(c, grantId);

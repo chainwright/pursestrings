@@ -2,10 +2,13 @@
 pragma solidity ^0.8.29;
 
 import {IERC20Min} from "./interfaces/IPursestrings.sol";
+import {SafeTransfer} from "./SafeTransfer.sol";
 
 /// Holds the owner's funds on one chain. Only its bound wallet can draw from it, and only by
 /// asking for an exact amount; the wallet returns unused allowance here. Money never leaves the chain.
 contract Vault {
+    using SafeTransfer for IERC20Min;
+
     IERC20Min public immutable token;
     address public immutable owner;
     address public wallet;
@@ -31,14 +34,14 @@ contract Vault {
     function release(uint256 amount) external returns (bool) {
         require(msg.sender == wallet, "wallet");
         if (token.balanceOf(address(this)) < amount) return false;
-        require(token.transfer(wallet, amount), "transfer");
+        token.safeTransfer(wallet, amount);
         emit Released(amount);
         return true;
     }
 
     function withdraw(address to, uint256 amount) external {
         require(msg.sender == owner, "owner");
-        require(token.transfer(to, amount), "transfer");
+        token.safeTransfer(to, amount);
         emit Withdrawn(to, amount);
     }
 }

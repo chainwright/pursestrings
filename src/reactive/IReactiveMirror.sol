@@ -26,7 +26,12 @@ struct CallbackConfiguration_V_1_0 {
     bytes payload;
 }
 
-interface IReactiveSystem {
+/// Fee vendor (the system contract on Lasna, the callback proxy on a destination chain).
+interface IPayable {
+    function debt(address contract_) external view returns (uint256);
+}
+
+interface IReactiveSystem is IPayable {
     function subscribe(
         uint256 chainId,
         address contractAddress,
