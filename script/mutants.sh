@@ -53,7 +53,9 @@ NAMES=(
 )
 
 budget="default (foundry.toml)"
-extra_env=()
+# Shrinking a counterexample doesn't change whether a mutant is killed, only how long forge spends
+# minimizing it; cap it so the whole run stays practical.
+extra_env=("FOUNDRY_INVARIANT_SHRINK_RUN_LIMIT=${SHRINK:-50}")
 if [ -n "${RUNS:-}" ]; then extra_env+=("FOUNDRY_INVARIANT_RUNS=$RUNS"); budget="runs=$RUNS"; fi
 if [ -n "${DEPTH:-}" ]; then extra_env+=("FOUNDRY_INVARIANT_DEPTH=$DEPTH"); budget="$budget depth=${DEPTH}"; fi
 

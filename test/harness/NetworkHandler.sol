@@ -64,7 +64,10 @@ contract NetworkHandler is Test {
         bytes data;
     }
 
-    Msg[] internal q;
+    /// The queue is qs[qh .. qs.length): a deque, so in-order delivery from the front is O(1)
+    /// (a mutant that floods the network must not make the model itself quadratic).
+    Msg[] internal qs;
+    uint256 internal qh;
     Msg[] internal late; // held back by the network, released much later
     Msg[64] internal history; // recently delivered, for late redelivery (replay)
     uint256 internal hcount;
@@ -196,19 +199,19 @@ contract NetworkHandler is Test {
     }
 
     function deliverNext() public {
-        if (q.length > 0) _deliverAt(0);
+        if (_qlen() > 0) _deliverAt(0);
     }
 
     /// Deliver a batch of 1-16 messages in order (the network is usually faster than the agents).
     function deliverBatch(uint256 s) public {
         uint256 k = 1 + (s % 16);
-        for (uint256 i; i < k && q.length > 0; i++) {
+        for (uint256 i; i < k && _qlen() > 0; i++) {
             _deliverAt(0);
         }
     }
 
     function deliverAny(uint256 s) public {
-        if (q.length > 0) _deliverAt(s % q.length);
+        if (_qlen() > 0) _deliverAt(s % _qlen());
     }
 
     /// Normal time: 1-60 s per step.
@@ -233,9 +236,9 @@ contract NetworkHandler is Test {
     }
 
     function duplicate(uint256 s) public {
-        if (q.length == 0 || q.length >= MAX_QUEUE) return;
-        Msg memory m = q[s % q.length];
-        q.push(m);
+        if (_qlen() == 0 || _qlen() >= MAX_QUEUE) return;
+        Msg memory m = qs[qh + s % _qlen()];
+        qs.push(m);
         duplicated++;
     }
 
@@ -252,8 +255,8 @@ contract NetworkHandler is Test {
         uint256 op = s % 15;
         uint256 r = s >> 8;
         if (op == 0) {
-            if (q.length > 0) {
-                _removeAt(r % q.length);
+            if (_qlen() > 0) {
+                _removeAt(r % _qlen());
                 dropped++;
             }
         } else if (op == 1) {
@@ -283,16 +286,16 @@ contract NetworkHandler is Test {
         } else if (op == 9 || op == 13) {
             // hold a message back (long delay); prefers an in-flight grant, the message whose
             // late arrival the epoch and cancel rules exist for
-            if (q.length > 0 && late.length < 64) {
-                uint256 i = r % q.length;
-                for (uint256 k; k < q.length; k++) {
-                    uint256 j = (r + k) % q.length;
-                    if (q[j].toWallet && bytes4(q[j].data) == SpendWallet.applyGrant.selector) {
+            if (_qlen() > 0 && late.length < 64) {
+                uint256 i = r % _qlen();
+                for (uint256 k; k < _qlen(); k++) {
+                    uint256 j = (r + k) % _qlen();
+                    if (qs[qh + j].toWallet && bytes4(qs[qh + j].data) == SpendWallet.applyGrant.selector) {
                         i = j;
                         break;
                     }
                 }
-                late.push(q[i]);
+                late.push(qs[qh + i]);
                 _removeAt(i);
                 delayed++;
             }
@@ -303,8 +306,8 @@ contract NetworkHandler is Test {
                 uint256 i = uint256(keccak256(abi.encode(r, k))) % late.length;
                 Msg memory m = late[i];
                 if (m.toWallet && block.timestamp < partitionUntil[m.chain]) continue;
-                if (q.length >= MAX_QUEUE) break;
-                q.push(m);
+                if (_qlen() >= MAX_QUEUE) break;
+                qs.push(m);
                 late[i] = late[late.length - 1];
                 late.pop();
             }
@@ -316,9 +319,9 @@ contract NetworkHandler is Test {
             partitions++;
         } else {
             // late redelivery of something already delivered
-            if (hcount > 0 && q.length < MAX_QUEUE) {
+            if (hcount > 0 && _qlen() < MAX_QUEUE) {
                 uint256 n = hcount < 64 ? hcount : 64;
-                q.push(history[r % n]);
+                qs.push(history[r % n]);
                 replayed++;
             }
         }
@@ -342,7 +345,7 @@ contract NetworkHandler is Test {
 
     function deliverAll() public {
         uint256 guard;
-        while (q.length > 0 && guard++ < 1000) {
+        while (_qlen() > 0 && guard++ < 1000) {
             _deliverAt(0);
         }
     }
@@ -357,7 +360,7 @@ contract NetworkHandler is Test {
     function healAndSettle() public {
         heals++;
         for (uint256 i; i < late.length; i++) {
-            q.push(late[i]);
+            qs.push(late[i]);
         }
         delete late;
         for (uint8 c; c < N; c++) {
@@ -377,12 +380,12 @@ contract NetworkHandler is Test {
     }
 
     function queueLength() external view returns (uint256) {
-        return q.length;
+        return _qlen();
     }
 
     /// Debug view: the selector (to wallet) or topic0 (to core) of queued message i.
     function queueAt(uint256 i) external view returns (bool toWallet, uint8 chain, bytes32 tag) {
-        return _tagOf(q[i]);
+        return _tagOf(qs[qh + i]);
     }
 
     function ownerStopped() public view returns (bool) {
@@ -405,8 +408,8 @@ contract NetworkHandler is Test {
     }
 
     function count(bool toWallet, bytes32 tag, uint8 chain) external view returns (uint256 n) {
-        for (uint256 i; i < q.length; i++) {
-            if (_matches(q[i], toWallet, tag, chain)) n++;
+        for (uint256 i; i < _qlen(); i++) {
+            if (_matches(qs[qh + i], toWallet, tag, chain)) n++;
         }
     }
 
@@ -420,26 +423,26 @@ contract NetworkHandler is Test {
     }
 
     function dropAll(bool toWallet, bytes32 tag, uint8 chain) external {
-        for (uint256 i = q.length; i > 0; i--) {
-            if (_matches(q[i - 1], toWallet, tag, chain)) _removeAt(i - 1);
+        for (uint256 i = _qlen(); i > 0; i--) {
+            if (_matches(qs[qh + i - 1], toWallet, tag, chain)) _removeAt(i - 1);
         }
     }
 
     function holdFirst(bool toWallet, bytes32 tag, uint8 chain) external {
         uint256 i = _find(toWallet, tag, chain);
-        late.push(q[i]);
+        late.push(qs[qh + i]);
         _removeAt(i);
     }
 
     function releaseHeld() external {
         for (uint256 i; i < late.length; i++) {
-            q.push(late[i]);
+            qs.push(late[i]);
         }
         delete late;
     }
 
     function duplicateFirst(bool toWallet, bytes32 tag, uint8 chain) external {
-        q.push(q[_find(toWallet, tag, chain)]);
+        qs.push(qs[qh + _find(toWallet, tag, chain)]);
     }
 
     /// Reorg the first matching callback on a branch that lives `window` seconds (any window,
@@ -451,7 +454,7 @@ contract NetworkHandler is Test {
     /// Deliver the first matching verify, served from the live competing branch of its chain.
     function deliverOnBranch(uint8 chain) external {
         uint256 i = _find(true, bytes32(SpendWallet.verify.selector), chain);
-        Msg memory m = q[i];
+        Msg memory m = qs[qh + i];
         _removeAt(i);
         require(_branchAlive(chain), "no live branch");
         _deliver(m, true);
@@ -470,7 +473,7 @@ contract NetworkHandler is Test {
             Msg memory m = history[(hcount - 1 - k) % 64];
             if (_matches(m, toWallet, tag, chain)) {
                 if (nth == 0) {
-                    q.push(m);
+                    qs.push(m);
                     return;
                 }
                 nth--;
@@ -544,12 +547,12 @@ contract NetworkHandler is Test {
 
     /// A reorg on some wallet's chain, shallower than that chain's confirmation wait.
     function _reorg(uint256 r) internal {
-        if (q.length == 0) return;
-        uint256 start = r % q.length;
-        for (uint256 k; k < q.length; k++) {
-            uint256 i = (start + k) % q.length;
-            if (!q[i].toWallet) continue;
-            uint64 window = uint64((r >> 24) % _wait(q[i].chain));
+        if (_qlen() == 0) return;
+        uint256 start = r % _qlen();
+        for (uint256 k; k < _qlen(); k++) {
+            uint256 i = (start + k) % _qlen();
+            if (!qs[qh + i].toWallet) continue;
+            uint64 window = uint64((r >> 24) % _wait(qs[qh + i].chain));
             _reorgAt(i, window, (r >> 16) & 1 == 0);
             return;
         }
@@ -559,7 +562,7 @@ contract NetworkHandler is Test {
     /// its state never becomes canonical. The branch stays readable for `window` seconds. The
     /// message is then re-included later (stays queued) or lost.
     function _reorgAt(uint256 i, uint64 window, bool lost) internal {
-        Msg memory m = q[i];
+        Msg memory m = qs[qh + i];
         uint256 snap = vm.snapshotState();
         vm.recordLogs();
         vm.prank(BRIDGE);
@@ -623,7 +626,7 @@ contract NetworkHandler is Test {
     }
 
     function _deliverAt(uint256 i) internal {
-        Msg memory m = q[i];
+        Msg memory m = qs[qh + i];
         _removeAt(i);
         bool onBranch = chaosOn && m.toWallet && bytes4(m.data) == SpendWallet.verify.selector && _branchAlive(m.chain)
             && uint256(keccak256(abi.encode(delivered, block.timestamp))) % 2 == 0;
@@ -726,16 +729,22 @@ contract NetworkHandler is Test {
             late.push(Msg(toWallet, c, data));
             return;
         }
-        if (q.length >= MAX_QUEUE) return; // a full network queue loses messages
-        q.push(Msg(toWallet, c, data));
-        if (q.length > maxQueue) maxQueue = q.length;
+        if (_qlen() >= MAX_QUEUE) return; // a full network queue loses messages
+        qs.push(Msg(toWallet, c, data));
+        if (_qlen() > maxQueue) maxQueue = _qlen();
     }
 
+    /// Remove entry i, keeping the order of the rest (shifts the i entries before it).
     function _removeAt(uint256 i) internal {
-        for (uint256 k = i; k + 1 < q.length; k++) {
-            q[k] = q[k + 1];
+        for (uint256 k = i; k > 0; k--) {
+            qs[qh + k] = qs[qh + k - 1];
         }
-        q.pop();
+        delete qs[qh];
+        qh++;
+    }
+
+    function _qlen() internal view returns (uint256) {
+        return qs.length - qh;
     }
 
     function _tagOf(Msg memory m) internal pure returns (bool, uint8, bytes32) {
@@ -750,8 +759,8 @@ contract NetworkHandler is Test {
     }
 
     function _find(bool toWallet, bytes32 tag, uint8 chain) internal view returns (uint256) {
-        for (uint256 i; i < q.length; i++) {
-            if (_matches(q[i], toWallet, tag, chain)) return i;
+        for (uint256 i; i < _qlen(); i++) {
+            if (_matches(qs[qh + i], toWallet, tag, chain)) return i;
         }
         revert("no such message queued");
     }
