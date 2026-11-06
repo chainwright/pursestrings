@@ -130,4 +130,14 @@ contract Loop is Script {
         require(ok, "faucet request failed");
         vm.stopBroadcast();
     }
+
+    /// Sends `wei_` of the chain's native ETH from the deployer to AGENT_ADDRESS, for the agent's
+    /// own transaction fees (its payments). Never budget tokens.
+    function fundAgent(uint256 chain, uint256 wei_) external {
+        vm.createSelectFork(vm.envString(rpcs[chain]));
+        vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
+        (bool ok,) = payable(vm.envAddress("AGENT_ADDRESS")).call{value: wei_}("");
+        require(ok, "transfer failed");
+        vm.stopBroadcast();
+    }
 }

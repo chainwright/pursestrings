@@ -30,9 +30,9 @@ What the tests do and don't show:
   batcher can leave L2 blocks unsafe longer, so L2 safety assumes a healthy sequencer and batcher
   until Reactive confirms it delivers only finalized logs.
 - STOP latency after a lost STOP log depends on the Cron period (1000 Lasna blocks): one
-  heartbeat cycle plus delivery, 51-59 min in our model for a Cron of 17-19.5 min (56 at the
-  default 18.5 min, from DOCS_BRIEF's single 1.11 s block-time sample). Lasna's real Cron period
-  is unmeasured.
+  heartbeat cycle plus delivery, 51-59 min in our model for a Cron of 17-19.5 min (53 at the
+  17.74 min derived from Lasna's block time, measured at 1.064 s over 10,000 blocks on 06.11).
+  Real Cron ticks are still to be observed on the live smoke test.
 - Nothing has run on Reactive yet: all latency, gas and fee figures are Foundry measurements or
   estimates.
 

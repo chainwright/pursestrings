@@ -11,13 +11,21 @@ printed) and the deployed addresses from DEPLOYMENTS_FILE (default deployments/l
     loop_logger.py summary                                      # median / p95 per path
     loop_logger.py last-tx --fn pay --chain base                # hash of the last Loop.s.sol call
 
-How a reactive tx is matched to an origin tx (a heuristic; Reactive's RPC may offer a direct link,
-to check with reactivedevs): the first coordinator event on Lasna, at or after the origin block's
-time, that this path must produce:
-    topup  GrantSent for the origin chain
-    donor  ReclaimSent (the ask), then a Credited of kind RECLAIM, then GrantSent for the origin chain
-    stop   Frozen
-For each matched reactive tx, getCallbacks(tx) on the system contract lists the destination txs.
+How a loop is matched (one loop at a time; not in the 2 h before 00:00 UTC, when pre-grants run):
+  1. the coordinator event on Lasna, at or after the origin block's time, that this path must
+     produce (a heuristic: Reactive's RPC may offer a direct origin-tx link, to check):
+       topup  GrantSent for the origin chain and the origin's UTC day (not tomorrow's pre-grant)
+       donor  ReclaimSent from another chain, then Credited (RECLAIM), then that GrantSent
+       stop   Frozen (epoch e)
+  2. the callback(s) that ANSWER it, found among getCallbacks(reactive tx) by reading each
+     destination receipt for the wallet event that confirms the step applied:
+       topup, donor  GrantApplied with that grant's id, from the origin chain's wallet
+       stop          EpochAck(e, frozen = true) from every wallet
+     Every other callback of the reactive tx (a heartbeat re-read, a callback to the other chain)
+     is recorded with role "other" and does not count.
+  3. complete = every required answer was found; GrantNotApplied for the grant is reported as a
+     failure. latencySec = the last answer's block time - the origin's block time (timestamps of
+     two different chains: ±1 s).
 
 Costs are recorded twice: what the receipts show (gas used x effective gas price), and the fee by
 the documented formula (DOCS_BRIEF section 5): Lasna max(price, basefee) x (gas + 100k); callbacks
@@ -69,6 +77,7 @@ def receipt(tx, env):
     b = json.loads(cast("block", str(h(r["blockNumber"])), "--json", env=env))
     gas, price = h(r["gasUsed"]), h(r.get("effectiveGasPrice", "0x0"))
     return {
+        "logs": [{"address": l["address"], "topics": l["topics"], "data": l["data"]} for l in r.get("logs", [])],
         "tx": tx,
         "block": h(r["blockNumber"]),
         "ts": h(b["timestamp"]),
@@ -126,62 +135,126 @@ def fee_callback(r):
     return max(r["gasPrice"], r["baseFee"]) * 11 * (r["gasUsed"] + 80_000) // 10
 
 
+def offline(*args):
+    r = subprocess.run([CAST, *args], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"cast {args[0]} failed: {r.stderr.strip()[:300]}")
+    return r.stdout.strip()
+
+
+def answers_in(rcpt, wanted):
+    """Which of the wanted wallet events this destination receipt contains.
+    wanted: list of (label, wallet address, topic0, topic1 or None, predicate on data words or None)."""
+    found = []
+    for lg in rcpt.get("logs", []):
+        for label, addr, t0, t1, pred in wanted:
+            if lg["address"].lower() != addr.lower() or not lg["topics"] or lg["topics"][0].lower() != t0:
+                continue
+            if t1 is not None and (len(lg["topics"]) < 2 or int(lg["topics"][1], 16) != t1):
+                continue
+            if pred is not None and not pred(words(lg["data"])):
+                continue
+            found.append(label)
+    return found
+
+
 def trace(a):
     dep = json.load(open(os.environ.get("DEPLOYMENTS_FILE", "deployments/latest.json")))
     rc = dep["coordinator"]
+    wallets = [dep["base"]["wallet"], dep["unichain"]["wallet"]]
     env, chain_id, idx = CHAINS[a.chain]
     origin = receipt(a.tx, env)
-    lasna_from = h(cast("find-block", str(origin["ts"]), env="LASNA_RPC_URL")) - 2
+    origin_day = origin["ts"] // 86400
+    lasna_from = max(0, h(cast("find-block", str(origin["ts"]), env="LASNA_RPC_URL")) - 2)
     deadline = time.time() + a.timeout_min * 60
-    steps = []
+    t_applied = offline("keccak", "GrantApplied(uint256,uint64,uint256,uint64)").lower()
+    t_not_applied = offline("keccak", "GrantNotApplied(uint256,uint8,uint64)").lower()
+    t_epoch_ack = offline("keccak", "EpochAck(uint64,bool,uint64)").lower()
+
+    # 1. the coordinator events this loop must produce; the last one carries the callback(s)
+    #    whose wallet-side answer ends the loop
     if a.path == "topup":
-        lg = find(rc, "GrantSent", lasna_from, lambda w: w[1] == idx, deadline)
-        steps = [lg]
+        # today's grant to the origin chain (not tomorrow's pre-grant)
+        steps = [find(rc, "GrantSent", lasna_from, lambda w: w[1] == idx and w[2] == origin_day, deadline)]
     elif a.path == "stop":
         steps = [find(rc, "Frozen", lasna_from, lambda w: True, deadline)]
     else:  # donor
-        ask = find(rc, "ReclaimSent", lasna_from, lambda w: w[1] != idx, deadline)
+        ask = find(rc, "ReclaimSent", lasna_from, lambda w: w[1] != idx and w[2] == origin_day, deadline)
         cred = ask and find(rc, "Credited", h(ask["blockNumber"]), lambda w: w[0] == 1, deadline)
-        grant = cred and find(rc, "GrantSent", h(cred["blockNumber"]), lambda w: w[1] == idx, deadline)
+        grant = cred and find(
+            rc, "GrantSent", h(cred["blockNumber"]), lambda w: w[1] == idx and w[2] == origin_day, deadline
+        )
         steps = [ask, cred, grant]
-    rec = {"path": a.path, "chain": a.chain, "origin": origin, "reactive": [], "complete": all(steps)}
-    for lg in steps:
+
+    # 2. what answers the loop: the wallet event(s) that confirm the grant / the freeze applied
+    last = steps[-1]
+    wanted, failure = [], []
+    if last:
+        w = words(last["data"])
+        if a.path in ("topup", "donor"):
+            gid = w[0]
+            wanted = [(f"GrantApplied#{gid}", wallets[idx], t_applied, gid, None)]
+            failure = [(f"GrantNotApplied#{gid}", wallets[idx], t_not_applied, gid, None)]
+        else:
+            e = w[0]
+            wanted = [(f"EpochAck({e}, frozen) on {n}", wallets[c], t_epoch_ack, e, lambda d: d[0] == 1)
+                      for c, n in enumerate(("base", "unichain"))]
+
+    rec = {"path": a.path, "chain": a.chain, "origin": origin, "reactive": [], "answers": {}, "failures": []}
+    seen_dest = {}
+    for k, lg in enumerate(steps):
         if not lg:
             continue
         rtx = lg["transactionHash"]
         rr = receipt(rtx, "LASNA_RPC_URL")
         rr["feeFormulaWei"] = fee_lasna(rr)
-        cbs = callbacks(rtx)
-        while isinstance(cbs, list) and not cbs and time.time() < deadline:
-            time.sleep(15)
+        is_last = k == len(steps) - 1
+        while True:
             cbs = callbacks(rtx)
-        dests = []
-        if isinstance(cbs, list):
-            for cb in cbs:
-                denv = RPC_BY_CHAIN_ID.get(cb["chainId"])
-                d = dict(cb)
-                if denv and int(cb["destTx"], 16) != 0:
-                    try:
-                        dr = receipt(cb["destTx"], denv)
-                        dr["feeFormulaWei"] = fee_callback(dr)
-                        d["receipt"] = dr
-                    except RuntimeError as e:
-                        d["receiptError"] = str(e)
-                dests.append(d)
-        else:
-            dests = cbs
+            dests = []
+            if isinstance(cbs, list):
+                for cb in cbs:
+                    d = dict(cb)
+                    denv = RPC_BY_CHAIN_ID.get(cb["chainId"])
+                    if denv and int(cb["destTx"], 16) != 0:
+                        try:
+                            dr = seen_dest.get(cb["destTx"]) or receipt(cb["destTx"], denv)
+                            seen_dest[cb["destTx"]] = dr
+                            dr["feeFormulaWei"] = fee_callback(dr)
+                            d["receipt"] = {kk: vv for kk, vv in dr.items() if kk != "logs"}
+                            got = answers_in(dr, wanted) if is_last else []
+                            bad = answers_in(dr, failure) if is_last else []
+                            d["role"] = "answer" if got else ("failed answer" if bad else "other")
+                            d["walletEvents"] = got + bad
+                            for g in got:
+                                rec["answers"].setdefault(g, {"destTx": cb["destTx"], "ts": dr["ts"]})
+                            for b in bad:
+                                if b not in rec["failures"]:
+                                    rec["failures"].append(b)
+                        except RuntimeError as e:
+                            d["receiptError"] = str(e)
+                    dests.append(d)
+            else:
+                dests = cbs
+            done = (not is_last) or len(rec["answers"]) == len(wanted) or rec["failures"]
+            if done or time.time() >= deadline:
+                break
+            time.sleep(15)
         rec["reactive"].append({"receipt": rr, "callbacks": dests})
-    ends = [d["receipt"]["ts"] for s in rec["reactive"] for d in (s["callbacks"] if isinstance(s["callbacks"], list) else [])
-            if "receipt" in d]
-    rec["latencySec"] = (max(ends) - origin["ts"]) if ends and rec["complete"] else None
+
+    rec["complete"] = bool(wanted) and len(rec["answers"]) == len(wanted) and not rec["failures"]
+    rec["latencySec"] = (max(v["ts"] for v in rec["answers"].values()) - origin["ts"]) if rec["complete"] else None
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "a") as f:
         f.write(json.dumps(rec) + "\n")
-    print(json.dumps({"path": rec["path"], "chain": rec["chain"], "complete": rec["complete"],
-                      "latencySec": rec["latencySec"], "reactiveTxs": [s["receipt"]["tx"] for s in rec["reactive"]],
-                      "destinationTxs": [d.get("destTx") for s in rec["reactive"]
-                                         for d in (s["callbacks"] if isinstance(s["callbacks"], list) else [])]},
-                     indent=1))
+    print(json.dumps({
+        "path": rec["path"], "chain": rec["chain"], "complete": rec["complete"], "latencySec": rec["latencySec"],
+        "answers": rec["answers"], "failures": rec["failures"],
+        "reactiveTxs": [st["receipt"]["tx"] for st in rec["reactive"]],
+        "otherCallbacks": [d.get("destTx") for st in rec["reactive"]
+                           for d in (st["callbacks"] if isinstance(st["callbacks"], list) else [])
+                           if d.get("role") == "other"],
+    }, indent=1))
 
 
 def summary(_):

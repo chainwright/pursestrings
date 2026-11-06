@@ -20,8 +20,8 @@ library TestnetConfig {
     uint64 internal constant WITHHELD_SEPOLIA = 150_000 + 50_000;
     uint64 internal constant WITHHELD_L2 = 80_000 + 50_000;
 
-    /// Cron on Lasna: Cron1000 fires every 1000 blocks: ~18.5 min at the 1.11 s per block DOCS_BRIEF
-    /// measured once (100 blocks in 111 s; the model's default), ~75-85 reactive txs a day. With
+    /// Cron on Lasna: Cron1000 fires every 1000 blocks: ~17.74 min at the 1.064 s per block
+    /// measured over 10,000 blocks on 06.11.2026 (the model's default), ~81 reactive txs a day. With
     /// the heartbeat answers that is a few lREACT a day by the documented fee formula (up to ~4.6
     /// for Cron alone if every tick were the heaviest measured); unmeasured. Cron10000 (~3 h) is
     /// the cheap fallback. Cron100 and below cost 10x+ more and are not used.
@@ -40,7 +40,7 @@ library TestnetConfig {
     /// reserve top-up path never waits.
     /// Each chain gets a heartbeat (a re-read) once this much time has passed since its last one,
     /// on the next react: within 40 min + one Cron period P (in practice ceil(40 / P) * P: 51 min
-    /// at P = 17 min, 55.5 at 18.5). The re-read re-announces a lost STOP press at once, so a lost
+    /// at P = 17 min, 53.2 at the measured 17.74). The re-read re-announces a lost STOP press at once, so a lost
     /// press with an idle pressing agent reaches every chain within about that plus a minute of
     /// delivery (test/ProductionTiming.t.sol sweeps P = 17-19.5 min: 51-59 min). About 3
     /// callbacks per ~51-56 min in an idle system.
@@ -50,7 +50,7 @@ library TestnetConfig {
     uint64 internal constant WAIT_OP_STACK = 30 minutes;
 
     /// Production timing for a chain, derived from its confirmation wait so the ratios hold:
-    ///  - grantTimeout 10 min: a grant is answered within seconds; Cron (~18.5 min) is the clock.
+    ///  - grantTimeout 10 min: a grant is answered within seconds; Cron (~17.74 min, measured) is the clock.
     ///  - verifyTimeout 5 min: one re-read round trip.
     ///  - reclaimTimeout = wait + 2 x verifyTimeout: an unanswered reclaim is closed only after its
     ///    return could have been confirmed (the core also never closes one whose return is pending).

@@ -76,10 +76,11 @@ contract NetworkHandler is Test {
 
     bool public immutable chaosOn;
     bool public immutable productionTiming;
-    /// Cron1000 period in the production-timing mode: 1000 Lasna blocks at the 1.11 s per block
-    /// DOCS_BRIEF measured (100 blocks in 111 s) = 1,110 s = 18.5 min. Unmeasured as a Cron period;
+    /// Cron1000 period in the production-timing mode: 1000 Lasna blocks at 1.064 s per block,
+    /// measured over 10,000 blocks on 06.11.2026 = 1,064 s = 17.74 min (round 5-6 used 1,110 s
+    /// from one 100-block sample). Still measured from block times, not from observed Cron ticks;
     /// tests sweep it with setCronEvery.
-    uint256 public cronEvery = 1110;
+    uint256 public cronEvery = 1064;
     uint64 public immutable startDay;
     uint256 internal callSeq;
 

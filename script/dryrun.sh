@@ -9,8 +9,10 @@
 #   2. script/Check.s.sol                (wiring on every chain)
 #   3. script/Check.s.sol simulateLoop() (Short -> react -> grant callback -> wallet ->
 #                                         GrantApplied -> react, with the proxy impersonated)
-#   4. script/dryrun_relay.py + script/loop_logger.py: the same loop as real local txs (anvil
-#      impersonation of the system contract and the proxy), traced by the live-loop logger
+#   4. script/dryrun_relay.py + script/loop_logger.py: a top-up and a STOP as real local txs (anvil
+#      impersonation of the system contract and the proxies), traced by the live-loop logger. The
+#      relay delivers non-answer callbacks (heartbeats) 30 s after the answers, and the check
+#      asserts the logger matched the grant / the epoch acks, not the latest callback.
 #   5. script/Loop.s.sol: the live-loop driver (pay, setCap, fundReserves, fundVault, stop)
 # The deployer key is anvil's public development key, derived into an environment variable and
 # never printed. Broadcast logs go to cache/dryrun/ and addresses to deployments/dryrun.json
@@ -71,8 +73,18 @@ step "^  (subscriptions|grant|allowance|dry-run)" "$FORGE" script script/Check.s
 echo "== 4. logger end to end on local txs (script/dryrun_relay.py plays the Reactive Network)"
 export LOOPS_FILE=cache/dryrun/loops.jsonl
 : > "$LOOPS_FILE"
-origin="$(python3 script/dryrun_relay.py)"
-python3 script/loop_logger.py trace --path topup --chain base --tx "$origin" --timeout-min 0.5
+check_trace() {  # $1 = expected answers; asserts complete, latency < 30 s (the late callback is not the answer)
+  python3 -c '
+import json, sys
+t = json.loads(sys.stdin.read()); n = int(sys.argv[1])
+ok = t["complete"] and len(t["answers"]) == n and t["latencySec"] is not None and t["latencySec"] < 30
+print("   matched", list(t["answers"]), "latency", t["latencySec"], "s; other callbacks", len(t["otherCallbacks"]))
+sys.exit(0 if ok else 1)' "$1" || { echo "FAILED: logger matching"; exit 1; }
+}
+origin="$(python3 script/dryrun_relay.py topup)"
+python3 script/loop_logger.py trace --path topup --chain base --tx "$origin" --timeout-min 0.5 | check_trace 1
+origin="$(python3 script/dryrun_relay.py stop)"
+python3 script/loop_logger.py trace --path stop --chain unichain --tx "$origin" --timeout-min 0.5 | check_trace 2
 python3 script/loop_logger.py summary
 echo "== 5. loop driver (script/Loop.s.sol) on the local chains"
 ok() { if grep -q "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"; then echo "   $1: ok"; else echo "   $1: FAILED"; exit 1; fi; }
@@ -81,6 +93,7 @@ ok() { if grep -q "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"; then echo "   $1: o
 "$FORGE" script script/Loop.s.sol --sig "fundReserves(uint256,uint256)" 1000000000000000000 0 --broadcast 2>&1 | ok "fundReserves 1 lREACT to the coordinator"
 "$FORGE" script script/Loop.s.sol --sig "fundVault(uint256,uint256)" 0 0 --broadcast 2>&1 | ok "fundVault (0, plumbing only)"
 "$FORGE" script script/Loop.s.sol --sig "stop(uint256)" 1 --broadcast 2>&1 | ok "STOP pressed on Unichain Sepolia"
+"$FORGE" script script/Loop.s.sol --sig "fundAgent(uint256,uint256)" 0 500000000000000 --broadcast 2>&1 | ok "fundAgent 0.0005 ETH on Base Sepolia"
 stop_tx="$(python3 script/loop_logger.py last-tx --fn stop --chain unichain)"
 echo "   last STOP tx (for the logger): $stop_tx"
 echo "dry run complete"

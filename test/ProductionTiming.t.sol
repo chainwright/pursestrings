@@ -10,7 +10,8 @@ import {IWalletEvents} from "../src/interfaces/IPursestrings.sol";
 /// The production timing values (TestnetConfig: waits 30/30/16 min, grant timeout 10 min, re-read
 /// 5 min, reclaim timeout = want TTL = wait + 10 min, heartbeat 40 min, origin events cap the
 /// retry backoff at 40 min) on the network model with
-/// Cron every 18.5 min by default (1000 blocks at the 1.11 s DOCS_BRIEF measured;
+/// Cron every 17.74 min by default (1000 blocks at the 1.064 s per block measured over 10,000
+/// Lasna blocks on 06.11.2026;
 /// NetworkHandler.settleProduction), swept where the Cron period matters. One test per relation the values exist
 /// for, plus the time a lost STOP takes to reach every chain. MUTANT=<n> swaps in a broken
 /// variant; the source-patch mutants W* change TestnetConfig itself.
@@ -44,12 +45,13 @@ contract ProductionTimingTest is Test {
     /// A STOP press whose log is lost, with the pressing chain's agent idle, reaches the
     /// coordinator and every chain within ceil(heartbeat / P) * P + 2 min, where P is the Cron
     /// period: the next heartbeat re-read of the pressing chain carries the press back at once.
-    /// Swept over P = 17, 18.3, 18.5 (the default: 1.11 s Lasna blocks), 19 and 19.5 min, every
+    /// Swept over P = 17, 17.74 (the default: 1.064 s Lasna blocks, measured), 18.3, 18.5, 19 and
+    /// 19.5 min, every
     /// pressing chain and 61 start offsets (1-min steps), with no agent activity anywhere (only Cron drives the
     /// core); and at the default P with the other agents paying $1 every 5 min. Measured at 1-min
     /// resolution. Logs the worst per period and what was spent meanwhile.
     function test_lostStopReachesEveryChainWithinOneBeatCycle() public {
-        uint256[5] memory periods = [uint256(1020), 1100, 1110, 1140, 1170];
+        uint256[6] memory periods = [uint256(1020), 1064, 1100, 1110, 1140, 1170];
         uint256 worstSpent;
         for (uint256 k; k < periods.length; k++) {
             uint256 p = periods[k];
@@ -58,7 +60,7 @@ contract ProductionTimingTest is Test {
             uint256 worst;
             for (uint8 pc; pc < 3; pc++) {
                 for (uint256 off; off < 61; off++) {
-                    for (uint256 active; active < (p == 1110 ? 2 : 1); active++) {
+                    for (uint256 active; active < (p == 1064 ? 2 : 1); active++) {
                         uint256 snap = vm.snapshotState();
                         (uint256 secs, uint256 spent) = _lostPress(pc, off * 1 minutes, active == 1, p);
                         vm.revertToState(snap);
