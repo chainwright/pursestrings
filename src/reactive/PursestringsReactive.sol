@@ -3,23 +3,23 @@ pragma solidity ^0.8.29;
 
 import {BudgetCore} from "../BudgetCore.sol";
 import {IWalletEvents, IConsoleEvents} from "../interfaces/IPursestrings.sol";
-import {LogRecord, CallbackConfiguration_V_1_0, IReactiveSystem} from "./IReactiveMirror.sol";
+import {AbstractReactive} from "@reactive/src/base/AbstractReactive.sol";
+import {ISystemContract} from "@reactive/src/interfaces/ISystemContract.sol";
 import {CallbackFront} from "./CallbackFront.sol";
-import {Payer} from "./Payer.sol";
 
 /// The reactive contract on Lasna: BudgetCore plus the Reactive glue. It subscribes to the
 /// wallets' coordinator events, the home-chain console and a Cron topic, decodes each LogRecord
 /// into one BudgetCore input, and turns every intent into a callback request to that chain's
 /// front. Fees: reserves deposited with the system contract (`depositTo`) are used first; the
 /// system contract can also collect from this contract's balance with pay(), and anyone can
-/// clear a debt with coverDebt() (Payer). Not yet run against the real system contract.
-contract PursestringsReactive is BudgetCore, Payer {
-    uint256 internal constant REACTIVE_IGNORE = 0xa65f96fc951c35ead38878e0f0b7a3c744a6f5ccc1476b313353ce31712313ad;
+/// clear a debt with coverDebt(). Built on reactive-lib-omni v0.1.0 (AbstractReactive: the system
+/// contract is the fixed address 0x8888...8888, `onlySystem`, `pay`, `receive`). Not yet run
+/// against the real system contract.
+contract PursestringsReactive is BudgetCore, AbstractReactive {
     /// Cron events are emitted on Lasna by this address (DOCS_BRIEF §2).
     address public constant CRON_SOURCE = 0x0000000000000000000000000000000000fffFfF;
 
     struct Wiring {
-        IReactiveSystem system;
         uint256 homeChainId;
         address console;
         uint256[] chainIds;
@@ -33,7 +33,6 @@ contract PursestringsReactive is BudgetCore, Payer {
         uint256 cronTopic;
     }
 
-    IReactiveSystem public immutable SYSTEM;
     uint256 public immutable homeChainId;
     address public immutable console;
     uint256 public immutable cronTopic;
@@ -50,7 +49,6 @@ contract PursestringsReactive is BudgetCore, Payer {
         for (uint256 c; c < n; c++) {
             require(w.callbackGas[c] >= 100_000, "callback gas below the network minimum");
         }
-        SYSTEM = w.system;
         homeChainId = w.homeChainId;
         console = w.console;
         cronTopic = w.cronTopic;
@@ -73,44 +71,34 @@ contract PursestringsReactive is BudgetCore, Payer {
         ];
         for (uint256 c; c < n; c++) {
             for (uint256 k; k < topics.length; k++) {
-                w.system
-                    .subscribe(
-                        w.chainIds[c],
-                        w.wallets[c],
-                        uint256(topics[k]),
-                        REACTIVE_IGNORE,
-                        REACTIVE_IGNORE,
-                        REACTIVE_IGNORE
-                    );
+                SYSTEM.subscribe(
+                    w.chainIds[c], w.wallets[c], uint256(topics[k]), REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
+                );
             }
         }
-        w.system
-            .subscribe(
-                w.homeChainId,
-                w.console,
-                uint256(IConsoleEvents.CapSet.selector),
-                REACTIVE_IGNORE,
-                REACTIVE_IGNORE,
-                REACTIVE_IGNORE
-            );
-        w.system
-            .subscribe(
-                w.homeChainId,
-                w.console,
-                uint256(IConsoleEvents.Unstop.selector),
-                REACTIVE_IGNORE,
-                REACTIVE_IGNORE,
-                REACTIVE_IGNORE
-            );
+        SYSTEM.subscribe(
+            w.homeChainId,
+            w.console,
+            uint256(IConsoleEvents.CapSet.selector),
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE
+        );
+        SYSTEM.subscribe(
+            w.homeChainId,
+            w.console,
+            uint256(IConsoleEvents.Unstop.selector),
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE
+        );
         if (w.cronTopic != 0) {
-            w.system
-                .subscribe(block.chainid, CRON_SOURCE, w.cronTopic, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE);
+            SYSTEM.subscribe(block.chainid, CRON_SOURCE, w.cronTopic, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE);
         }
     }
 
     /// Never filter by reverting: a revert in react() is still billed. Unknown logs are ignored.
-    function react(LogRecord calldata log) external {
-        require(msg.sender == address(SYSTEM), "system");
+    function react(LogRecord calldata log) external onlySystem {
         bytes32 t0 = bytes32(log.topic0);
         if (log.contractAddress == CRON_SOURCE && log.chainId == block.chainid) {
             if (cronTopic != 0 && log.topic0 == cronTopic) _onTick();
@@ -168,7 +156,7 @@ contract PursestringsReactive is BudgetCore, Payer {
     /// The network overwrites the first argument (here `rvm`) with this contract's address.
     function _dispatch(uint8 c, bytes memory payload) internal override {
         SYSTEM.requestCallbackV_1_0(
-            CallbackConfiguration_V_1_0({
+            ISystemContract.CallbackConfiguration_V_1_0({
                 chainId: chainIds[c],
                 recipient: fronts[c],
                 gasLimit: callbackGas[c],
@@ -177,7 +165,8 @@ contract PursestringsReactive is BudgetCore, Payer {
         );
     }
 
-    function _vendor() internal view override returns (address) {
-        return address(SYSTEM);
+    /// Anyone may settle this contract's debt with the system contract from its own balance.
+    function coverDebt() external {
+        _coverDebt();
     }
 }

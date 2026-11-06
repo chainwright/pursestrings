@@ -9,13 +9,14 @@ import {IERC20Min, IWalletEvents, K_RECLAIM} from "../src/interfaces/IPursestrin
 import {PursestringsReactive} from "../src/reactive/PursestringsReactive.sol";
 import {CallbackFront} from "../src/reactive/CallbackFront.sol";
 import {TestnetConfig} from "../src/reactive/TestnetConfig.sol";
-import {LogRecord, CallbackConfiguration_V_1_0, IReactiveSystem} from "../src/reactive/IReactiveMirror.sol";
+import {ISystemContract} from "@reactive/src/interfaces/ISystemContract.sol";
+import {IReactive} from "@reactive/src/interfaces/IReactive.sol";
 import {MockToken} from "./mocks/MockToken.sol";
 
 /// Stand-in for the system contract when measuring react(): each callback request emits the
 /// CallbackRequest event with the full configuration and writes two fresh storage slots. The
 /// real contract's cost per request is not known to us; this is meant to be on the heavy side.
-contract GasSystem is IReactiveSystem {
+contract GasSystem is ISystemContract {
     event CallbackRequest(
         uint256 indexed chainId, address indexed sender, address indexed recipient, uint256 version, bytes configuration
     );
@@ -25,7 +26,15 @@ contract GasSystem is IReactiveSystem {
 
     function subscribe(uint256, address, uint256, uint256, uint256, uint256) external {}
 
-    function requestCallbackV_1_0(CallbackConfiguration_V_1_0 calldata c) external {
+    function unsubscribe(uint256, address, uint256, uint256, uint256, uint256) external {}
+
+    function requestCallback(CallbackVersion, bytes memory) external pure {
+        revert("unused");
+    }
+
+    receive() external payable {}
+
+    function requestCallbackV_1_0(ISystemContract.CallbackConfiguration_V_1_0 memory c) external {
         n++;
         slots[keccak256(abi.encode(n, 0))] = c.chainId;
         slots[keccak256(abi.encode(n, 1))] = c.gasLimit;
@@ -275,7 +284,7 @@ contract GasTest is Test {
     function test_retryListsCarryOverAcrossTicks() public {
         vm.warp(T0 + 12 hours);
         (StuffedReactive rc, GasSystem sys) = _stuffed(12, 12, 0);
-        LogRecord memory cron;
+        IReactive.LogRecord memory cron;
         cron.chainId = block.chainid;
         cron.contractAddress = 0x0000000000000000000000000000000000fffFfF;
         cron.topic0 = TestnetConfig.CRON1000;
@@ -296,9 +305,9 @@ contract GasTest is Test {
     // ---------------------------------------------------------------- react()
 
     function _stuffed(uint256 nG, uint256 nP, uint256 nR) internal returns (StuffedReactive rc, GasSystem sys) {
-        sys = new GasSystem();
+        vm.etch(0x8888888888888888888888888888888888888888, address(new GasSystem()).code);
+        sys = GasSystem(payable(0x8888888888888888888888888888888888888888));
         PursestringsReactive.Wiring memory w;
-        w.system = sys;
         w.homeChainId = 1;
         w.console = address(0xC0);
         w.chainIds = new uint256[](3);
@@ -330,7 +339,10 @@ contract GasTest is Test {
         rc.stuff(nG, nP, nR);
     }
 
-    function _measureReact(StuffedReactive rc, GasSystem sys, LogRecord memory l) internal returns (uint256 used) {
+    function _measureReact(StuffedReactive rc, GasSystem sys, IReactive.LogRecord memory l)
+        internal
+        returns (uint256 used)
+    {
         vm.cool(address(rc));
         vm.cool(address(sys));
         uint256 g = gasleft();
@@ -339,7 +351,7 @@ contract GasTest is Test {
         used = g - gasleft();
     }
 
-    function _walletLog(uint256 c, bytes32 t0, bytes memory data) internal pure returns (LogRecord memory l) {
+    function _walletLog(uint256 c, bytes32 t0, bytes memory data) internal pure returns (IReactive.LogRecord memory l) {
         l.chainId = 100 + c;
         l.contractAddress = address(uint160(0x1000 + c));
         l.topic0 = uint256(t0);
@@ -365,7 +377,7 @@ contract GasTest is Test {
             uint256 gStop =
                 _measureReact(rc, sys, _walletLog(1, IWalletEvents.StopPressed.selector, abi.encode(uint64(7))));
             uint256 sent2 = sys.n() - sent1;
-            LogRecord memory cron;
+            IReactive.LogRecord memory cron;
             cron.chainId = block.chainid;
             cron.contractAddress = 0x0000000000000000000000000000000000fffFfF;
             cron.topic0 = TestnetConfig.CRON1000;

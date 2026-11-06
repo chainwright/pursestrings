@@ -104,7 +104,7 @@ for m in $ONLY; do
     *)
       dir="$PERSIST_ROOT/$m/proj"
       mkdir -p "$dir"
-      cp -R "$ROOT/src" "$ROOT/test" "$ROOT/foundry.toml" "$dir/"
+      cp -R "$ROOT/src" "$ROOT/test" "$ROOT/foundry.toml" "$ROOT/remappings.txt" "$dir/"
       ln -s "$ROOT/lib" "$dir/lib"
       if ! python3 script/patch_mutants.py apply "$m" "$dir"; then
         printf "%-4s %-74s %s\n" "$m" "$(describe "$m")" "PATCH DOES NOT APPLY"

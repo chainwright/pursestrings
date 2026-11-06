@@ -10,40 +10,14 @@ import {IERC20Min, IWalletEvents, IConsoleEvents} from "../src/interfaces/IPurse
 import {PursestringsReactive} from "../src/reactive/PursestringsReactive.sol";
 import {CallbackFront} from "../src/reactive/CallbackFront.sol";
 import {TestnetConfig} from "../src/reactive/TestnetConfig.sol";
-import {LogRecord, CallbackConfiguration_V_1_0, IReactiveSystem} from "../src/reactive/IReactiveMirror.sol";
+import {ISystemContract} from "@reactive/src/interfaces/ISystemContract.sol";
+import {IReactive} from "@reactive/src/interfaces/IReactive.sol";
+import {AbstractPayer} from "@reactive/src/base/AbstractPayer.sol";
+import {AbstractCallback} from "@reactive/src/base/AbstractCallback.sol";
 import {MockToken} from "./mocks/MockToken.sol";
+import {MockSystem} from "./mocks/MockSystem.sol";
 
-/// Records subscriptions and callback requests the way the Omni system contract would receive
-/// them, and plays fee vendor (debt, pay) for the fee tests.
-contract MockSystem is IReactiveSystem {
-    uint256 public subscriptions;
-    uint256 public cronSubscriptions;
-    CallbackConfiguration_V_1_0[] internal reqs;
-    mapping(address => uint256) public debt;
-
-    function subscribe(uint256, address contractAddress, uint256, uint256, uint256, uint256) external {
-        subscriptions++;
-        if (contractAddress == 0x0000000000000000000000000000000000fffFfF) cronSubscriptions++;
-    }
-
-    function requestCallbackV_1_0(CallbackConfiguration_V_1_0 calldata c) external {
-        reqs.push(c);
-    }
-
-    function callbacks() external view returns (uint256) {
-        return reqs.length;
-    }
-
-    function request(uint256 i) external view returns (CallbackConfiguration_V_1_0 memory) {
-        return reqs[i];
-    }
-
-    function setDebt(address a, uint256 d) external {
-        debt[a] = d;
-    }
-
-    receive() external payable {}
-}
+address constant SYSTEM_ADDR = 0x8888888888888888888888888888888888888888;
 
 /// The Reactive glue: subscriptions, every react() route, callback encoding, Cron, fees, and the
 /// fee-only front's checks. The loop tests run real wallet logs through react() (not the fuzz
@@ -66,7 +40,8 @@ contract ReactiveGlueTest is Test {
 
     function setUp() public {
         vm.warp(1_800_000_000 - (1_800_000_000 % 1 days) + 6 hours);
-        sys = new MockSystem();
+        vm.etch(SYSTEM_ADDR, address(new MockSystem()).code);
+        sys = MockSystem(payable(SYSTEM_ADDR));
         console = new OwnerConsole(OWNER);
         // Deploy order: fronts (need the RC address), wallets (need the front), then the RC.
         // 3 fronts + 3 x (token, vault, wallet) = 12 creations before the RC.
@@ -75,7 +50,6 @@ contract ReactiveGlueTest is Test {
             fronts[c] = new CallbackFront(PROXY, rcAddr, OWNER);
         }
         PursestringsReactive.Wiring memory w;
-        w.system = sys;
         w.homeChainId = ids[0];
         w.console = address(console);
         w.chainIds = new uint256[](3);
@@ -121,13 +95,15 @@ contract ReactiveGlueTest is Test {
     }
 
     function test_reactOnlyFromSystem() public {
-        LogRecord memory l = _log(0, IWalletEvents.Short.selector, abi.encode(_today(), 3e6, uint64(block.timestamp)));
-        vm.expectRevert(bytes("system"));
+        IReactive.LogRecord memory l =
+            _log(0, IWalletEvents.Short.selector, abi.encode(_today(), 3e6, uint64(block.timestamp)));
+        vm.expectRevert(abi.encodeWithSelector(AbstractPayer.NotAuthorized.selector, address(this), SYSTEM_ADDR));
         rc.react(l);
     }
 
     function test_unknownEmitterIgnored() public {
-        LogRecord memory l = _log(0, IWalletEvents.Short.selector, abi.encode(_today(), 3e6, uint64(block.timestamp)));
+        IReactive.LogRecord memory l =
+            _log(0, IWalletEvents.Short.selector, abi.encode(_today(), 3e6, uint64(block.timestamp)));
         l.contractAddress = address(0xBAD);
         vm.prank(address(sys));
         rc.react(l);
@@ -139,7 +115,7 @@ contract ReactiveGlueTest is Test {
     function test_localLoop_shortBecomesAllowance() public {
         _react(_log(0, IWalletEvents.Short.selector, abi.encode(_today(), 3e6, uint64(block.timestamp))));
         assertEq(_count(SpendWallet.applyGrant.selector), 1, "one grant");
-        CallbackConfiguration_V_1_0 memory r = sys.request(_first(SpendWallet.applyGrant.selector));
+        ISystemContract.CallbackConfiguration_V_1_0 memory r = sys.request(_first(SpendWallet.applyGrant.selector));
         assertEq(r.chainId, ids[0]);
         assertEq(r.recipient, address(fronts[0]));
         assertEq(r.gasLimit, TestnetConfig.CALLBACK_GAS_L2);
@@ -183,7 +159,7 @@ contract ReactiveGlueTest is Test {
     function test_cronFromOtherTopicOrChainIgnored() public {
         vm.warp(block.timestamp + 17 hours);
         _react(_cron(TestnetConfig.CRON10000)); // not the subscribed topic
-        LogRecord memory l = _cron(TestnetConfig.CRON1000);
+        IReactive.LogRecord memory l = _cron(TestnetConfig.CRON1000);
         l.chainId = ids[0]; // a "cron" log from another chain
         _react(l);
         assertEq(sys.callbacks(), 0);
@@ -288,7 +264,7 @@ contract ReactiveGlueTest is Test {
 
     function test_feesOnlyTheVendorCollects_andAnyoneCanCoverDebt() public {
         vm.deal(address(rc), 1 ether);
-        vm.expectRevert(bytes("vendor only"));
+        vm.expectRevert(abi.encodeWithSelector(AbstractPayer.NotAuthorized.selector, address(this), SYSTEM_ADDR));
         rc.pay(1);
         vm.prank(address(sys));
         rc.pay(0.1 ether);
@@ -298,7 +274,7 @@ contract ReactiveGlueTest is Test {
         assertEq(address(sys).balance, 0.3 ether);
         // the front: proxy collects, owner withdraws the float
         vm.deal(address(fronts[0]), 1 ether);
-        vm.expectRevert(bytes("vendor only"));
+        vm.expectRevert(abi.encodeWithSelector(AbstractPayer.NotAuthorized.selector, address(this), PROXY));
         fronts[0].pay(1);
         vm.prank(PROXY);
         fronts[0].pay(0.1 ether);
@@ -313,11 +289,13 @@ contract ReactiveGlueTest is Test {
 
     function test_frontRejectsWrongSenderWrongRcForeignSelectorsAndUnbound() public {
         bytes memory inner = abi.encodeCall(SpendWallet.applyGrant, (1, wallets[0].today(), 1e6, 0));
-        vm.expectRevert(bytes("proxy"));
+        vm.expectRevert(abi.encodeWithSelector(AbstractPayer.NotAuthorized.selector, address(this), PROXY));
         fronts[0].deliver(address(rc), inner);
 
         vm.prank(PROXY);
-        vm.expectRevert(bytes("reactive contract"));
+        vm.expectRevert(
+            abi.encodeWithSelector(AbstractCallback.CallbackNotAuthorized.selector, address(0xBEEF), address(rc))
+        );
         fronts[0].deliver(address(0xBEEF), inner);
 
         // no generic forwarder: pay() and anything else is refused even from the proxy + RC
@@ -362,13 +340,13 @@ contract ReactiveGlueTest is Test {
         return uint64(block.timestamp / 1 days);
     }
 
-    function _react(LogRecord memory l) internal {
+    function _react(IReactive.LogRecord memory l) internal {
         routed[l.topic0]++;
         vm.prank(address(sys));
         rc.react(l);
     }
 
-    function _log(uint256 c, bytes32 t0, bytes memory data) internal view returns (LogRecord memory l) {
+    function _log(uint256 c, bytes32 t0, bytes memory data) internal view returns (IReactive.LogRecord memory l) {
         l.chainId = ids[c];
         l.contractAddress = address(wallets[c]);
         l.topic0 = uint256(t0);
@@ -376,7 +354,7 @@ contract ReactiveGlueTest is Test {
         l.opCode = 1;
     }
 
-    function _cron(uint256 topic) internal view returns (LogRecord memory l) {
+    function _cron(uint256 topic) internal view returns (IReactive.LogRecord memory l) {
         l.chainId = block.chainid;
         l.contractAddress = 0x0000000000000000000000000000000000fffFfF;
         l.topic0 = topic;
@@ -403,7 +381,7 @@ contract ReactiveGlueTest is Test {
 
     function _pump() internal {
         for (uint256 guard; guard < 50 && pumped < sys.callbacks(); guard++) {
-            CallbackConfiguration_V_1_0 memory r = sys.request(pumped++);
+            ISystemContract.CallbackConfiguration_V_1_0 memory r = sys.request(pumped++);
             uint256 c = r.chainId == ids[0] ? 0 : r.chainId == ids[1] ? 1 : 2;
             (, bytes memory inner) = abi.decode(_tail(r.payload), (address, bytes));
             vm.recordLogs();
@@ -423,7 +401,7 @@ contract ReactiveGlueTest is Test {
         }
     }
 
-    function _toRecord(Vm.Log memory g, uint256 chainId) internal pure returns (LogRecord memory l) {
+    function _toRecord(Vm.Log memory g, uint256 chainId) internal pure returns (IReactive.LogRecord memory l) {
         l.chainId = chainId;
         l.contractAddress = g.emitter;
         l.topic0 = uint256(g.topics[0]);

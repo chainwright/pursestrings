@@ -4,5 +4,11 @@
       "name": "v1.17.0",
       "rev": "f3dae6e6ee381f25eb6a246f7da9b85c91a68219"
     }
+  },
+  "lib/reactive-lib-omni": {
+    "tag": {
+      "name": "v0.1.0",
+      "rev": "3ade0dcf1d27e67e5783ef807e73a1b9e0c0cce8"
+    }
   }
 }

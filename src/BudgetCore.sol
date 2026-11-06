@@ -539,12 +539,12 @@ abstract contract BudgetCore {
     /// one capped backoff, and a front that stays dead while its agent is active costs one cancel
     /// per 40 min, not one per 10 min.
     function _alive(uint8 c, bool answer) internal virtual {
-        uint8 cap = answer ? 0 : ALIVE_CAP;
-        if (epochTries[c] > cap) epochTries[c] = cap;
+        uint8 limit = answer ? 0 : ALIVE_CAP;
+        if (epochTries[c] > limit) epochTries[c] = limit;
         uint256 id = _inflightId[c];
         if (id != 0) {
             Grant storage g = grants[id];
-            if (!g.answered && g.tries > cap) g.tries = cap;
+            if (!g.answered && g.tries > limit) g.tries = limit;
         }
     }
 

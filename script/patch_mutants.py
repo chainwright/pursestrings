@@ -37,7 +37,8 @@ MUTANTS = [
     ("Y12", "wallet: accepts a short delivery from the vault (fee-on-transfer guard off)",
      "src/SpendWallet.sol", "        if (got >= amount) return true;", "        if (true) return true;"),
     ("Y13", "front: drops the reactive-contract id check",
-     "src/reactive/CallbackFront.sol", '        require(rvm == rc, "reactive contract");', "        rvm;"),
+     "src/reactive/CallbackFront.sol",
+     "external onlyServiceProvider onlyCallbackSender(rvm) {", "external onlyServiceProvider {\n        rvm;"),
     ("Y14", "core: epoch ack trusted at head, without the re-read",
      "src/BudgetCore.sol",
      "        if (e > epochAcked[c]) _admit(K_EPOCH, c, e, 0, 0, 0, ts);",
@@ -72,11 +73,11 @@ MUTANTS = [
      "    function _echoStopForCoordinator() internal virtual {\n        if (lastPressAt > pressAckedAt) {",
      "    function _echoStopForCoordinator() internal virtual {\n        if (lastPressAt > pressAckedAt && block.timestamp >= uint256(stopEchoAt) + SHORT_REARM) {"),
     ("J2", "core: no backoff handling for epoch resends (only the grant half)",
-     "src/BudgetCore.sol", "        if (epochTries[c] > cap) epochTries[c] = cap;\n", ""),
+     "src/BudgetCore.sol", "        if (epochTries[c] > limit) epochTries[c] = limit;\n", ""),
     ("W17", "core: an origin-only event resets the backoff fully (round-4 behaviour)",
-     "src/BudgetCore.sol", "        uint8 cap = answer ? 0 : ALIVE_CAP;", "        uint8 cap = 0;"),
+     "src/BudgetCore.sol", "        uint8 limit = answer ? 0 : ALIVE_CAP;", "        uint8 limit = 0;"),
     ("W14", "core: no backoff reset when a chain shows it is alive",
-     "src/BudgetCore.sol", "        uint8 cap = answer ? 0 : ALIVE_CAP;", "        uint8 cap = 255;"),
+     "src/BudgetCore.sol", "        uint8 limit = answer ? 0 : ALIVE_CAP;", "        uint8 limit = 255;"),
 ]
 
 
