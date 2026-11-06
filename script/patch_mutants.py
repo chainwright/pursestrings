@@ -64,6 +64,10 @@ MUTANTS = [
      "src/reactive/TestnetConfig.sol", "        p.wantTtl = p.reclaimTimeout;", "        p.wantTtl = 10 minutes;"),
     ("W12", "config: production grant timeout 10 h",
      "src/reactive/TestnetConfig.sol", "        p.grantTimeout = 10 minutes;", "        p.grantTimeout = 10 hours;"),
+    ("W15", "core: a reclaim is sized to the first short chain's want only (old sizing)",
+     "src/BudgetCore.sol",
+     "            if (w.amount != 0) owed += w.amount > chunk ? w.amount : chunk;",
+     "            if (w.amount != 0 && owed == 0) owed = w.amount;"),
     ("W14", "core: no backoff reset when a chain shows it is alive",
      "src/BudgetCore.sol", "        epochTries[c] = 0;\n        uint256 id = _inflightId[c];", "        return;\n        uint256 id = _inflightId[c];"),
 ]

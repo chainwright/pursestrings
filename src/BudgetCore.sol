@@ -492,6 +492,9 @@ abstract contract BudgetCore {
         uint256 chunk = b.cap / 10;
         uint8 start = _rr;
         _rr = uint8((uint256(_rr) + 1) % nChains); // rotate, so no chain is always served first
+        // 1. serve from the pool; add up what the chains still short are owed (each at least one
+        //    chunk, which is what serving will give them)
+        uint256 owed;
         for (uint8 k; k < nChains; k++) {
             uint8 c = uint8((uint256(start) + k) % nChains);
             if (!_wanting(c, t) || !_inflightFree(c)) continue;
@@ -504,16 +507,19 @@ abstract contract BudgetCore {
                 _grant(c, t, give);
                 w.amount = give >= need ? 0 : uint128(need - give);
             }
-            if (w.amount == 0) continue;
-            for (uint8 j; j < nChains; j++) {
-                if (j == c) continue;
-                // A chain that asked recently is no donor, even once served: otherwise a grant is
-                // reclaimed before its agent can spend it, and allowance circulates (ping-pong).
-                if (_askedRecently(j, t)) continue;
-                if (openReclaim[j][t] != 0 || b.dry[j] || b.held[j] <= keepFloor) continue;
-                if (!_canSend()) return;
-                _sendReclaim(j, t, w.amount);
-            }
+            if (w.amount != 0) owed += w.amount > chunk ? w.amount : chunk;
+        }
+        if (owed == 0) return;
+        // 2. one reclaim per eligible donor for everything owed, so a single confirmation cycle
+        //    covers every short chain (sizing it to one chain's want made two short chains wait
+        //    for two 30-min cycles, and the first return could go to the other chain)
+        for (uint8 j; j < nChains; j++) {
+            // A chain that asked recently is no donor, even once served: otherwise a grant is
+            // reclaimed before its agent can spend it, and allowance circulates (ping-pong).
+            if (_askedRecently(j, t)) continue;
+            if (openReclaim[j][t] != 0 || b.dry[j] || b.held[j] <= keepFloor) continue;
+            if (!_canSend()) return;
+            _sendReclaim(j, t, owed);
         }
     }
 

@@ -127,6 +127,31 @@ contract ProductionTimingTest is Test {
         _assertSafe();
     }
 
+    /// Two chains short at once with one donor: one reclaim, sized to everything both are owed,
+    /// serves both within one confirmation cycle (wait 30 min + Cron + delivery), instead of one
+    /// chain per 30-min cycle.
+    function test_twoShortChainsServedInOneConfirmationCycle() public {
+        _fresh();
+        assertFalse(h.payExact(0, 10e6));
+        assertFalse(h.payExact(1, 10e6));
+        h.settleProduction(45 minutes); // pool empty; chain 0 is a donor again
+        assertTrue(h.payExact(1, 10e6), "setup: chain 1 spends all");
+        assertFalse(h.payExact(1, 3e6));
+        assertFalse(h.payExact(2, 3e6));
+        uint256 start = block.timestamp;
+        bool paid1;
+        bool paid2;
+        for (uint256 r; r < 14 && !(paid1 && paid2); r++) {
+            // <= 70 min: one cycle measures 60 min; the old per-chain sizing took 95 min
+            h.settleProduction(300);
+            if (!paid1) paid1 = h.payExact(1, 3e6);
+            if (!paid2) paid2 = h.payExact(2, 3e6);
+        }
+        assertTrue(paid1 && paid2, "two short chains not both served within one confirmation cycle");
+        console2.log("two short chains: minutes until both served", (block.timestamp - start) / 60);
+        _assertSafe();
+    }
+
     /// grantTimeout: a grant whose callback is lost is cancelled after ~10 min (plus a Cron
     /// period), the chain's in-flight slot frees, and its retrying agent is served (W12).
     function test_lostGrantIsCancelledAndTheChainServedAgain() public {
