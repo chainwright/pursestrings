@@ -11,7 +11,11 @@ the mutants, what is still not covered, and what the spike changed in the design
 forge build
 forge test             # invariants, directed scenarios, liveness, production timing, gas, Reactive glue (~30-45 s)
 script/mutants.sh      # full suite x 2 seeds per mutant: each must fail, the real contracts must pass (30-60 min, machine-dependent)
+script/dryrun.sh       # the whole testnet deployment + one loop, rehearsed on three local anvils (no network)
 ```
+
+Built on reactive-lib-omni v0.1.0. The live testnet loop (deploy, fund, 20 loops per path, logger) is prepared but not
+run: see `LIVE_LOOP.md` for the exact commands and their costs.
 
 Tested by fuzz + mutation (not proven), against our own model of the network. MIT licensed.
 
