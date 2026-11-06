@@ -27,18 +27,29 @@ abstract contract BudgetCore {
     uint8 internal constant G_CANCELLING = 3;
     uint8 internal constant G_REFUNDED = 4;
 
+    /// Timing per chain (TestnetConfig.chainParams derives the production values from the wait).
+    /// Seconds, packed into one storage slot (uint32: up to 136 years).
+    struct ChainParams {
+        /// How long a return must have existed on its origin chain before it is credited. Must
+        /// exceed that chain's reorg window.
+        uint32 confirmWait;
+        /// An unanswered grant is cancelled after this (doubling per retry, up to 32x); epoch
+        /// messages are resent on the same schedule.
+        uint32 grantTimeout;
+        /// An unanswered reclaim is closed after this. Never while its return is pending.
+        uint32 reclaimTimeout;
+        /// A re-read is resent after this (doubling per retry, up to 32x).
+        uint32 verifyTimeout;
+        /// A chain's want expires after this; while it lives, that chain is no donor.
+        uint32 wantTtl;
+    }
+
     struct Params {
         uint8 nChains;
         uint256 cap;
         uint256 keepFloor;
-        /// Per chain: how long a return must have existed on its origin chain before it is
-        /// credited. Must exceed that chain's reorg window (see TestnetConfig).
-        uint64[] confirmWaits;
-        uint64 grantTimeout;
-        uint64 reclaimTimeout;
-        uint64 verifyTimeout;
+        ChainParams[] chains;
         uint64 pregrantWindow;
-        uint64 wantTtl;
         /// Every chain gets a heartbeat (a cheap re-read) at least this often, driven by Cron.
         /// It carries a lost STOP press back even if nothing else is sent to that chain.
         /// 0 = off.
@@ -117,11 +128,7 @@ abstract contract BudgetCore {
 
     uint8 public immutable nChains;
     uint256 public immutable keepFloor;
-    uint64 public immutable grantTimeout;
-    uint64 public immutable reclaimTimeout;
-    uint64 public immutable verifyTimeout;
     uint64 public immutable pregrantWindow;
-    uint64 public immutable wantTtl;
     uint64 public immutable heartbeat;
 
     uint256 public cap;
@@ -135,7 +142,7 @@ abstract contract BudgetCore {
     mapping(uint8 => uint64) public epochSentAt;
     mapping(uint8 => uint8) public epochTries;
     mapping(uint8 => uint64) internal _lastEpochSent;
-    mapping(uint8 => uint64) public confirmWaitOf;
+    mapping(uint8 => ChainParams) internal _cp;
 
     mapping(uint64 => DayBook) internal _days;
 
@@ -179,18 +186,14 @@ abstract contract BudgetCore {
     constructor(Params memory p) {
         // STOP reaches every chain in the same call: one epoch message per chain fits the budget.
         require(p.nChains > 0 && p.nChains <= MAX_SENDS, "chains");
-        require(p.confirmWaits.length == p.nChains, "waits");
+        require(p.chains.length == p.nChains, "chain params");
         nChains = p.nChains;
         cap = p.cap < MAX_CAP ? p.cap : MAX_CAP;
         keepFloor = p.keepFloor;
         for (uint8 c; c < p.nChains; c++) {
-            confirmWaitOf[c] = p.confirmWaits[c];
+            _cp[c] = p.chains[c];
         }
-        grantTimeout = p.grantTimeout;
-        reclaimTimeout = p.reclaimTimeout;
-        verifyTimeout = p.verifyTimeout;
         pregrantWindow = p.pregrantWindow;
-        wantTtl = p.wantTtl;
         heartbeat = p.heartbeat;
     }
 
@@ -359,11 +362,15 @@ abstract contract BudgetCore {
         for (uint8 c; c < nChains; c++) {
             if (epochAcked[c] >= epoch) continue;
             bool fresh = _lastEpochSent[c] != epoch;
-            if (fresh || nowTs >= epochSentAt[c] + _backoff(grantTimeout, epochTries[c])) {
+            if (fresh || nowTs >= epochSentAt[c] + _backoff(_cp[c].grantTimeout, epochTries[c])) {
                 if (!_canSend()) break;
                 _sendEpoch(c);
             }
         }
+
+        // A call that sent epoch (STOP/unstop) messages does nothing else: the most important
+        // call stays the lightest. The rest waits for the next event or Cron tick.
+        if (_sendsLeft <= MAX_SENDS) return;
 
         // 1b. heartbeat: one chain per beat, round robin, so each chain hears from the core at
         //     least every `heartbeat` even when nothing else is due (Cron drives this).
@@ -399,8 +406,10 @@ abstract contract BudgetCore {
                     n--;
                     continue;
                 }
-                if (nowTs >= g.sentAt + _backoff(grantTimeout, g.tries) && pending[_key(K_VOID, g.chain, id)].kind == 0)
-                {
+                if (
+                    nowTs >= g.sentAt + _backoff(_cp[g.chain].grantTimeout, g.tries)
+                        && pending[_key(K_VOID, g.chain, id)].kind == 0
+                ) {
                     if (!_canSendBackground()) break;
                     _sendCancel(id);
                 }
@@ -416,7 +425,11 @@ abstract contract BudgetCore {
             for (uint256 s; s < SCAN && n > 0; s++) {
                 if (i >= n) i = 0;
                 Reclaim storage r = reclaims[_liveReclaims[i]];
-                if (r.open && nowTs >= r.sentAt + reclaimTimeout) _closeReclaim(_liveReclaims[i]);
+                // a reclaim whose return is pending is answered: it never times out
+                if (
+                    r.open && nowTs >= r.sentAt + _cp[r.chain].reclaimTimeout
+                        && pending[_key(K_RECLAIM, r.chain, _liveReclaims[i])].kind == 0
+                ) _closeReclaim(_liveReclaims[i]);
                 if (!r.open) {
                     _removeAt(_liveReclaims, i);
                     n--;
@@ -517,12 +530,12 @@ abstract contract BudgetCore {
 
     function _askedRecently(uint8 c, uint64 t) internal view returns (bool) {
         Want storage w = want[c];
-        return w.day == t && w.at != 0 && block.timestamp <= uint256(w.at) + wantTtl;
+        return w.day == t && w.at != 0 && block.timestamp <= uint256(w.at) + _cp[c].wantTtl;
     }
 
     function _wanting(uint8 c, uint64 t) internal view returns (bool) {
         Want storage w = want[c];
-        return w.day == t && w.amount > 0 && block.timestamp <= uint256(w.at) + wantTtl;
+        return w.day == t && w.amount > 0 && block.timestamp <= uint256(w.at) + _cp[c].wantTtl;
     }
 
     // ============================================================ actions
@@ -590,7 +603,7 @@ abstract contract BudgetCore {
     /// The confirmation wait has passed: re-read the fact on the origin chain.
     function _onMatured(bytes32 k) internal virtual {
         Pending storage p = pending[k];
-        if (p.verifySentAt == 0 || block.timestamp >= p.verifySentAt + _backoff(verifyTimeout, p.tries)) {
+        if (p.verifySentAt == 0 || block.timestamp >= p.verifySentAt + _backoff(_cp[p.chain].verifyTimeout, p.tries)) {
             if (p.verifySentAt != 0 && p.tries < 255) p.tries++;
             p.verifySentAt = uint64(block.timestamp);
             _send(p.chain, abi.encodeCall(IWalletInbox.verify, (p.kind, p.id)));
@@ -612,14 +625,14 @@ abstract contract BudgetCore {
     /// Rule 2: a re-read counts only if the fact had existed for the whole confirmation wait when
     /// it was read (both times from the origin chain's clock). This is the safety check.
     function _oldEnough(uint8 c, Echo memory v) internal view virtual returns (bool) {
-        return v.ts >= v.appliedAt + confirmWaitOf[c];
+        return v.ts >= v.appliedAt + _cp[c].confirmWait;
     }
 
     /// Rule 2, cost: don't ask for a re-read before the fact can be old enough. Not needed for
     /// safety (_oldEnough is), but an early re-read is a billed callback that can only fail.
     function _waitPassed(bytes32 k, uint64 nowTs) internal view virtual returns (bool) {
         Pending storage p = pending[k];
-        return nowTs >= p.originTs + confirmWaitOf[p.chain];
+        return nowTs >= p.originTs + _cp[p.chain].confirmWait;
     }
 
     /// An unstop lifts only the frozen epoch it names.
@@ -690,6 +703,14 @@ abstract contract BudgetCore {
     function _dispatch(uint8 c, bytes memory payload) internal virtual;
 
     // ================================================================ views
+
+    function chainParams(uint8 c) external view returns (ChainParams memory) {
+        return _cp[c];
+    }
+
+    function confirmWaitOf(uint8 c) external view returns (uint64) {
+        return _cp[c].confirmWait;
+    }
 
     function today() external view returns (uint64) {
         return _today();

@@ -99,22 +99,16 @@ contract ReactiveGlueTest is Test {
             w.fronts[c] = address(fronts[c]);
             w.callbackGas[c] = c == 2 ? TestnetConfig.CALLBACK_GAS_SEPOLIA : TestnetConfig.CALLBACK_GAS_L2;
         }
-        uint64[] memory waits = new uint64[](3);
-        waits[0] = TestnetConfig.WAIT_OP_STACK;
-        waits[1] = TestnetConfig.WAIT_OP_STACK;
-        waits[2] = TestnetConfig.WAIT_SEPOLIA;
-        BudgetCore.Params memory p = BudgetCore.Params({
-            nChains: 3,
-            cap: CAP,
-            keepFloor: 2e6,
-            confirmWaits: waits,
-            grantTimeout: 300,
-            reclaimTimeout: 300,
-            verifyTimeout: 120,
-            pregrantWindow: 2 hours,
-            wantTtl: 600,
-            heartbeat: TestnetConfig.HEARTBEAT
-        });
+        BudgetCore.Params memory p;
+        p.nChains = 3;
+        p.cap = CAP;
+        p.keepFloor = 2e6;
+        p.pregrantWindow = 2 hours;
+        p.heartbeat = TestnetConfig.HEARTBEAT;
+        p.chains = new BudgetCore.ChainParams[](3);
+        p.chains[0] = TestnetConfig.chainParams(TestnetConfig.WAIT_OP_STACK);
+        p.chains[1] = TestnetConfig.chainParams(TestnetConfig.WAIT_OP_STACK);
+        p.chains[2] = TestnetConfig.chainParams(TestnetConfig.WAIT_SEPOLIA);
         rc = new PursestringsReactive(p, w);
         assertEq(address(rc), rcAddr, "address prediction");
     }
@@ -208,7 +202,7 @@ contract ReactiveGlueTest is Test {
             _payAndPump(0, 1e6);
         }
         // a want on chain 2 after the TTL: reclaims -> Reclaimed -> (wait) -> verify -> Verified
-        vm.warp(block.timestamp + 700);
+        vm.warp(block.timestamp + rc.chainParams(0).wantTtl + 1);
         _payAndPump(2, 5e6);
         assertGt(rc.pendingCount(), 0, "reclaims admitted as pending");
         vm.warp(block.timestamp + TestnetConfig.WAIT_OP_STACK + 1);
@@ -246,7 +240,7 @@ contract ReactiveGlueTest is Test {
         _route(vm.getRecordedLogs());
         assertGt(sys.callbacks(), pumped, "grant requested");
         pumped = sys.callbacks(); // ... and lost
-        vm.warp(block.timestamp + 301);
+        vm.warp(block.timestamp + rc.chainParams(0).grantTimeout + 1);
         _react(_cron(TestnetConfig.CRON1000));
         _pump();
         // GrantNotApplied: a grant the vault can't fund

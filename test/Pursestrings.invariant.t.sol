@@ -19,7 +19,7 @@ contract PursestringsInvariantTest is StdInvariant, Test {
     function setUp() public {
         vm.warp(1_800_000_000); // a fixed date; 12:00 UTC-ish within its day
         uint256 m = vm.envOr("MUTANT", uint256(0));
-        h = new NetworkHandler(m, true);
+        h = new NetworkHandler(m, true, false);
         core = h.core();
         bytes4[] memory sels = new bytes4[](9);
         sels[0] = NetworkHandler.pay.selector;
@@ -109,25 +109,46 @@ contract PursestringsInvariantTest is StdInvariant, Test {
 /// allowance plus the slack above the floor of peers that are not short themselves covered the
 /// need. (Peers that are short keep their allowance; that is the anti ping-pong rule.)
 contract PursestringsLivenessTest is Test {
+    function livenessRun(uint256 seed, bool production) external returns (uint256) {
+        return _liveness(seed, false, production, 0);
+    }
+
     /// Bound derived from the protocol, in 5-minute retry rounds: a peer that asked recently is
     /// protected from reclaim for wantTtl (10 min = 2 rounds), then reclaim + confirmation wait +
     /// re-read (1 round), then the agent's next retry (1 round), plus 1 for a Short that lands
     /// just after a round boundary. Refused with budget available for 6 rounds = starved.
     uint256 internal constant STARVE = 6;
 
+    /// Production timing (TestnetConfig): waits 30/30/16 min, reclaim/want timeouts 40/40/26 min,
+    /// Cron every 17 min, agents retrying every 5 min. Bound derived the same way, in 5-min rounds:
+    /// a peer that asked is protected for wantTtl (40 min = 8), the reclaim goes out on the next
+    /// react (1), its return waits 30 min (6), the re-read goes out on the next react and comes
+    /// back (1), the grant lands (1), the agent's next retry (1), boundary (1), spare (1) = 20.
+    uint256 internal constant STARVE_PRODUCTION = 20;
+
     function testFuzz_liveness_shortChainGetsServed(uint256 seed) public {
-        _liveness(seed, false);
+        _liveness(seed, false, false, STARVE);
+    }
+
+    /// forge-config: default.fuzz.runs = 64
+    function testFuzz_liveness_productionTiming(uint256 seed) public {
+        _liveness(seed, false, true, STARVE_PRODUCTION);
     }
 
     /// The same with chain 2 dead for the whole measured period (every callback to it lost) while
     /// its agent keeps asking: chains 0 and 1 must still not starve (R2-2).
     function testFuzz_liveness_othersServedWhileOneChainIsDead(uint256 seed) public {
-        _liveness(seed, true);
+        _liveness(seed, true, false, STARVE);
     }
 
-    function _liveness(uint256 seed, bool chain2Dead) internal {
+    /// Runs one liveness scenario and returns the longest refused-with-budget streak seen (in
+    /// 5-minute retry rounds). Asserts it stays below `bound` (0 = measure only).
+    function _liveness(uint256 seed, bool chain2Dead, bool production, uint256 bound)
+        internal
+        returns (uint256 maxStreak)
+    {
         vm.warp(1_800_000_000 - (1_800_000_000 % 1 days) + 6 hours); // 06:00, far from midnight
-        NetworkHandler h = new NetworkHandler(0, false);
+        NetworkHandler h = new NetworkHandler(0, false, production);
         for (uint256 i; i < 60; i++) {
             uint256 s = uint256(keccak256(abi.encode(seed, i)));
             uint256 op = s % 6;
@@ -137,7 +158,8 @@ contract PursestringsLivenessTest is Test {
             else if (op == 4) h.duplicate(s >> 8);
             else vm.warp(block.timestamp + ((s >> 8) % 120));
         }
-        h.settle();
+        if (production) h.settleProduction(2 hours);
+        else h.settle();
         uint256 held2AtDeath;
         if (chain2Dead) {
             h.killChain(2, 1 days);
@@ -146,7 +168,7 @@ contract PursestringsLivenessTest is Test {
 
         uint256[3] memory starved; // consecutive rounds refused while budget was available
         uint256 servedAfterShort;
-        for (uint256 round; round < 20; round++) {
+        for (uint256 round; round < (production ? 40 : 20); round++) {
             for (uint8 c; c < 3; c++) {
                 uint256 need = h.lastNeed(c);
                 if (need == 0) {
@@ -169,12 +191,16 @@ contract PursestringsLivenessTest is Test {
                     starved[c] = 0;
                 } else if (available) {
                     starved[c]++;
-                    assertLt(starved[c], STARVE, "(d) short chain starved although budget was available");
+                    if (starved[c] > maxStreak) maxStreak = starved[c];
+                    if (bound != 0) {
+                        assertLt(starved[c], bound, "(d) short chain starved although budget was available");
+                    }
                 } else {
                     starved[c] = 0;
                 }
             }
-            h.settleFor(5); // ~5 min between retries, under the 10 min want TTL
+            if (production) h.settleProduction(300);
+            else h.settleFor(5); // ~5 min between retries, under the 10 min want TTL
         }
         assertEq(h.core().today(), h.startDay(), "test must stay within one day");
         emit log_named_uint("short chains served on retry", servedAfterShort);
@@ -199,7 +225,7 @@ contract PursestringsLivenessTest is Test {
 contract PursestringsCoverageWalk is Test {
     function test_coverageWalk() public {
         vm.warp(1_800_000_000);
-        NetworkHandler h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), true);
+        NetworkHandler h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), true, false);
         uint256 steps = vm.envOr("WALK_STEPS", uint256(4000));
         for (uint256 i; i < steps; i++) {
             uint256 s = uint256(keccak256(abi.encode("walk", i)));

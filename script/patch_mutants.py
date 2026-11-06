@@ -26,8 +26,8 @@ MUTANTS = [
      "        token.safeTransfer(address(vault), amount);\n        stranded = 0;"),
     ("Y6", "core: every chain uses chain 0's (shortest) confirmation wait",
      "src/BudgetCore.sol",
-     "        return v.ts >= v.appliedAt + confirmWaitOf[c];",
-     "        return v.ts >= v.appliedAt + confirmWaitOf[0];"),
+     "        return v.ts >= v.appliedAt + _cp[c].confirmWait;",
+     "        return v.ts >= v.appliedAt + _cp[0].confirmWait;"),
     ("Y8", "wallet: applies epoch messages older than its own epoch",
      "src/SpendWallet.sol", "        if (e < epoch) return;\n", ""),
     ("Y11", "wallet: forgets stranded tokens even when the return failed",
@@ -51,6 +51,9 @@ MUTANTS = [
      ""),
     ("Z3", "core: no limit of one unanswered grant per chain",
      "src/BudgetCore.sol", "        return inflight[c] == 0;", "        return true;"),
+    ("Z4", "core: a reclaim can time out while its return is pending",
+     "src/BudgetCore.sol",
+     "                        && pending[_key(K_RECLAIM, r.chain, _liveReclaims[i])].kind == 0\n", ""),
 ]
 
 

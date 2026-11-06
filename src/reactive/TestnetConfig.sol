@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
+import {BudgetCore} from "../BudgetCore.sol";
+
 /// Deployment numbers for the testnet live loop (Lasna <-> Sepolia, Base Sepolia, Unichain
 /// Sepolia). Sources: DOCS_BRIEF.md (proxies, extraGas/maxChargeGas read on-chain 04.11.2026,
 /// Cron topics) and test/Gas.t.sol (measured wallet gas). Nothing here has been deployed yet.
@@ -41,6 +43,21 @@ library TestnetConfig {
 
     uint64 internal constant WAIT_SEPOLIA = 16 minutes;
     uint64 internal constant WAIT_OP_STACK = 30 minutes;
+
+    /// Production timing for a chain, derived from its confirmation wait so the ratios hold:
+    ///  - grantTimeout 10 min: a grant is answered within seconds; Cron (~17 min) is the clock.
+    ///  - verifyTimeout 5 min: one re-read round trip.
+    ///  - reclaimTimeout = wait + 2 x verifyTimeout: an unanswered reclaim is closed only after its
+    ///    return could have been confirmed (the core also never closes one whose return is pending).
+    ///  - wantTtl = reclaimTimeout: a want lives as long as the donor path it may trigger.
+    /// Sepolia: wait 16, reclaim/want 26 min. Base/Unichain Sepolia: wait 30, reclaim/want 40 min.
+    function chainParams(uint64 wait) internal pure returns (BudgetCore.ChainParams memory p) {
+        p.confirmWait = uint32(wait);
+        p.grantTimeout = 10 minutes;
+        p.verifyTimeout = 5 minutes;
+        p.reclaimTimeout = uint32(wait) + 2 * p.verifyTimeout;
+        p.wantTtl = p.reclaimTimeout;
+    }
 
     /// Callback gasLimit per chain = withheld + 1.5 x (measured worst wallet entry through the
     /// front with the test token + an allowance for USDC's heavier transfers), rounded up.

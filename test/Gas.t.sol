@@ -314,18 +314,18 @@ contract GasTest is Test {
             w.callbackGas[c] = TestnetConfig.CALLBACK_GAS_L2;
             waits[c] = 60;
         }
-        BudgetCore.Params memory p = BudgetCore.Params({
-            nChains: 3,
-            cap: 20e6,
-            keepFloor: 2e6,
-            confirmWaits: waits,
-            grantTimeout: 300,
-            reclaimTimeout: 300,
-            verifyTimeout: 120,
-            pregrantWindow: 2 hours,
-            wantTtl: 600,
-            heartbeat: TestnetConfig.HEARTBEAT
-        });
+        BudgetCore.Params memory p;
+        p.nChains = 3;
+        p.cap = 20e6;
+        p.keepFloor = 2e6;
+        p.pregrantWindow = 2 hours;
+        p.heartbeat = TestnetConfig.HEARTBEAT;
+        p.chains = new BudgetCore.ChainParams[](3);
+        for (uint256 c; c < 3; c++) {
+            p.chains[c] = BudgetCore.ChainParams({
+                confirmWait: uint32(waits[c]), grantTimeout: 300, reclaimTimeout: 300, verifyTimeout: 120, wantTtl: 600
+            });
+        }
         rc = new StuffedReactive(p, w);
         rc.stuff(nG, nP, nR);
     }

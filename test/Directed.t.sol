@@ -32,7 +32,7 @@ contract DirectedTest is Test {
 
     function setUp() public {
         vm.warp(T0);
-        h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false);
+        h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false, false);
         core = h.core();
     }
 
@@ -183,6 +183,28 @@ contract DirectedTest is Test {
         vm.warp(block.timestamp + 61);
         h.tick();
         assertEq(h.count(true, VERIFY, 0), 1, "re-read requested once the wait has passed");
+    }
+
+    /// A reclaim whose return is pending never times out, even if confirming it takes longer
+    /// than reclaimTimeout (here the re-read is delayed): the donor isn't asked again meanwhile.
+    function test_reclaimWithPendingReturnDoesNotTimeOut() public {
+        _fundTwo();
+        _reclaimsForChain2();
+        h.dropFirst(true, RECLAIM, 1);
+        h.deliverFirst(true, RECLAIM, 0);
+        h.deliverFirst(false, RECLAIMED, 0); // pending; donor 0 has answered
+        uint256 id = core.openReclaim(0, _today());
+        assertGt(id, 0, "setup: reclaim open");
+        vm.warp(block.timestamp + core.chainParams(0).confirmWait + 1);
+        h.tick();
+        h.holdFirst(true, VERIFY, 0); // the re-read is slow
+        vm.warp(block.timestamp + core.chainParams(0).reclaimTimeout + 1);
+        h.tick();
+        assertEq(core.openReclaim(0, _today()), id, "a reclaim with a pending return timed out");
+        assertEq(h.count(true, RECLAIM, 0), 0, "donor 0 asked again while its return was pending");
+        h.releaseHeld();
+        h.settleFor(4);
+        _assertSafe();
     }
 
     /// Rule 3: a reclaim shrinks only unspent allowance. Chain 0 has spent $6 of $10.
@@ -466,7 +488,7 @@ contract DirectedTest is Test {
 contract AssumptionTest is Test {
     function test_outsideTheModel_reorgDeeperThanTheWaitOvercredits() public {
         vm.warp(1_800_000_000 - (1_800_000_000 % 1 days) + 6 hours);
-        NetworkHandler h = new NetworkHandler(0, false);
+        NetworkHandler h = new NetworkHandler(0, false, false);
         bytes32 reclaim = bytes32(SpendWallet.applyReclaim.selector);
         uint64 t = uint64(block.timestamp / 1 days);
         assertFalse(h.payExact(0, 10e6));

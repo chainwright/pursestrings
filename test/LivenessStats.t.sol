@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 import {Test, console2} from "forge-std/Test.sol";
 import {NetworkHandler} from "./harness/NetworkHandler.sol";
 import {BudgetCoreHarness} from "./harness/BudgetCoreHarness.sol";
+import {PursestringsLivenessTest} from "./Pursestrings.invariant.t.sol";
 
 /// Not a pass/fail test: measures how often the liveness model is non-vacuous and how many
 /// refused retry rounds a short chain waits while budget exists (numbers for SPIKE_RESULT.md).
@@ -17,7 +18,7 @@ contract LivenessStats is Test {
         for (uint256 seed; seed < 400; seed++) {
             uint256[3] memory streak;
             vm.warp(1_800_000_000 - (1_800_000_000 % 1 days) + 6 hours);
-            NetworkHandler h = new NetworkHandler(0, false);
+            NetworkHandler h = new NetworkHandler(0, false, false);
             for (uint256 i; i < 60; i++) {
                 uint256 s = uint256(keccak256(abi.encode(seed, i)));
                 uint256 op = s % 6;
@@ -74,6 +75,22 @@ contract LivenessStats is Test {
             if (j == c || h.lastNeed(j) > 0) continue;
             uint256 u = h.wallets(j).unspentOf(t);
             if (u > h.FLOOR()) slack += u - h.FLOOR();
+        }
+    }
+
+    /// The same scenario with production timing: the distribution of refused-with-budget streaks.
+    function test_livenessStatsProductionTiming() public {
+        PursestringsLivenessTest t = new PursestringsLivenessTest();
+        uint256[25] memory hist;
+        uint256 worst;
+        for (uint256 seed; seed < 120; seed++) {
+            uint256 m = t.livenessRun(seed, true);
+            hist[m > 24 ? 24 : m]++;
+            if (m > worst) worst = m;
+        }
+        console2.log("production timing, 120 seeds: worst refused-with-budget streak (5-min rounds)", worst);
+        for (uint256 i; i < 25; i++) {
+            if (hist[i] > 0) console2.log("  seeds whose worst streak was", i, hist[i]);
         }
     }
 }

@@ -10,6 +10,7 @@ import {IERC20Min, IWalletEvents, IConsoleEvents} from "../../src/interfaces/IPu
 import {BudgetCoreHarness} from "./BudgetCoreHarness.sol";
 import {MutantCore, MutantWallet} from "../mutants/Mutants.sol";
 import {MockToken} from "../mocks/MockToken.sol";
+import {TestnetConfig} from "../../src/reactive/TestnetConfig.sol";
 
 /// The network model. It owns one in-memory queue of messages in both directions:
 ///   core -> wallet : callback payloads (Intent events of the core)
@@ -74,6 +75,8 @@ contract NetworkHandler is Test {
     Branch[] internal branches;
 
     bool public immutable chaosOn;
+    bool public immutable productionTiming;
+    uint256 public constant CRON_EVERY = 1020; // Cron1000 on Lasna: ~17 min
     uint64 public immutable startDay;
     uint256 internal callSeq;
 
@@ -138,28 +141,38 @@ contract NetworkHandler is Test {
     uint256 public voidsSeen;
     uint256 public maxQueue;
 
-    constructor(uint256 mutant, bool chaos_) {
+    constructor(uint256 mutant, bool chaos_, bool productionTiming_) {
         chaosOn = chaos_;
+        productionTiming = productionTiming_;
         startDay = uint64(block.timestamp / 1 days);
-        // Model time is compressed: waits of 1-3 min per chain (production: 16-30 min, see
-        // TestnetConfig). What the model keeps is the relation the design rests on: every reorg
-        // window is shorter than its chain's wait.
-        uint64[] memory waits = new uint64[](N);
-        waits[0] = 60;
-        waits[1] = 90;
-        waits[2] = 180;
-        BudgetCore.Params memory p = BudgetCore.Params({
-            nChains: N,
-            cap: CAP,
-            keepFloor: FLOOR,
-            confirmWaits: waits,
-            grantTimeout: 300,
-            reclaimTimeout: 300,
-            verifyTimeout: 120,
-            pregrantWindow: 2 hours,
-            wantTtl: 600,
-            heartbeat: 1800
-        });
+        BudgetCore.Params memory p;
+        p.nChains = N;
+        p.cap = CAP;
+        p.keepFloor = FLOOR;
+        p.pregrantWindow = 2 hours;
+        p.chains = new BudgetCore.ChainParams[](N);
+        if (productionTiming_) {
+            // The testnet values (TestnetConfig): waits 30/30/16 min, timeouts derived from them,
+            // a 1 h heartbeat; Cron ticks every 17 min (see settleProduction).
+            p.chains[0] = TestnetConfig.chainParams(TestnetConfig.WAIT_OP_STACK);
+            p.chains[1] = TestnetConfig.chainParams(TestnetConfig.WAIT_OP_STACK);
+            p.chains[2] = TestnetConfig.chainParams(TestnetConfig.WAIT_SEPOLIA);
+            p.heartbeat = TestnetConfig.HEARTBEAT;
+        } else {
+            // Compressed model time: waits of 1-3 min per chain. The ratios match production:
+            // reorg window < wait < reclaimTimeout (= wait + 2 x verifyTimeout) <= wantTtl.
+            uint32[3] memory waits = [uint32(60), 90, 180];
+            for (uint8 c; c < N; c++) {
+                p.chains[c] = BudgetCore.ChainParams({
+                    confirmWait: waits[c],
+                    grantTimeout: 300,
+                    reclaimTimeout: waits[c] + 240,
+                    verifyTimeout: 120,
+                    wantTtl: 600
+                });
+            }
+            p.heartbeat = 1800;
+        }
         core = mutant == 0 ? new BudgetCoreHarness(p, address(this)) : new MutantCore(p, address(this), mutant);
         console = new OwnerConsole(OWNER);
         gCfgCap = CAP;
@@ -348,6 +361,19 @@ contract NetworkHandler is Test {
             deliverAll();
             vm.warp(block.timestamp + 61);
             tick();
+        }
+        deliverAll();
+    }
+
+    /// Production pacing: `secs` seconds pass in 1-minute steps; everything queued is delivered
+    /// each minute (callbacks and origin logs take seconds), and the core ticks only on Cron
+    /// boundaries (every CRON_EVERY seconds), as on Lasna with Cron1000.
+    function settleProduction(uint256 secs) public {
+        for (uint256 t; t < secs; t += 60) {
+            deliverAll();
+            uint256 before = block.timestamp / CRON_EVERY;
+            vm.warp(block.timestamp + 60);
+            if (block.timestamp / CRON_EVERY != before) tick();
         }
         deliverAll();
     }
