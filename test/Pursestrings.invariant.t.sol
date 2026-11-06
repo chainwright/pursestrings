@@ -120,7 +120,7 @@ contract PursestringsLivenessTest is Test {
     uint256 internal constant STARVE = 6;
 
     /// Production timing (TestnetConfig): waits 30/30/16 min, reclaim/want timeouts 40/40/26 min,
-    /// Cron every 17 min, agents retrying every 5 min. Bound derived the same way, in 5-min rounds:
+    /// Cron every 18.5 min (NetworkHandler.cronEvery), agents retrying every 5 min. Bound derived the same way, in 5-min rounds:
     /// a peer that asked is protected for wantTtl (40 min = 8), the reclaim goes out on the next
     /// react (1), its return waits 30 min (6), the re-read goes out on the next react and comes
     /// back (1), the grant lands (1), the agent's next retry (1), boundary (1), spare (1) = 20.

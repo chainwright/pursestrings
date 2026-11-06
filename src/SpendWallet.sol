@@ -282,7 +282,7 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
         if (e > epoch) _roll(e);
         frozen = frozen_ || lastPressAt > pressAckedAt;
         emit EpochAck(e, frozen, uint64(block.timestamp));
-        _echoStop();
+        _echoStopForCoordinator();
         _sweep();
         _flush();
     }
@@ -303,7 +303,7 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
         } else if (kind == K_EPOCH) {
             emit Verified(kind, key, epoch >= key, 0, 0, 0, epochSince, nowTs);
         }
-        _echoStop(); // the coordinator's periodic heartbeat is a verify: a lost press rides on it
+        _echoStopForCoordinator(); // the coordinator's heartbeat is a verify: a lost press rides on it
     }
 
     // ------------------------------------------------------------------ views
@@ -384,6 +384,16 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
     /// chains running, even if the agent on this chain is idle.
     function _echoStop() internal virtual {
         if (lastPressAt > pressAckedAt && block.timestamp >= uint256(stopEchoAt) + SHORT_REARM) {
+            stopEchoAt = uint64(block.timestamp);
+            emit StopPressed(lastPressAt);
+        }
+    }
+
+    /// The same when the coordinator itself is asking (a re-read or an epoch message): no rate
+    /// limit, because the coordinator already paces these. Otherwise a heartbeat landing within
+    /// SHORT_REARM of the press would be wasted, and the press would wait a whole beat cycle.
+    function _echoStopForCoordinator() internal virtual {
+        if (lastPressAt > pressAckedAt) {
             stopEchoAt = uint64(block.timestamp);
             emit StopPressed(lastPressAt);
         }

@@ -20,9 +20,11 @@ library TestnetConfig {
     uint64 internal constant WITHHELD_SEPOLIA = 150_000 + 50_000;
     uint64 internal constant WITHHELD_L2 = 80_000 + 50_000;
 
-    /// Cron on Lasna: Cron1000 fires about every 1000 blocks (~18 min at ~1.1 s blocks), about
-    /// 78 reactive txs and ~1-2.3 lREACT a day (DOCS_BRIEF §5). Cron10000 (~3 h) is the cheap
-    /// fallback. Cron100 and below cost 10x+ more and are not used.
+    /// Cron on Lasna: Cron1000 fires every 1000 blocks: ~18.5 min at the 1.11 s per block DOCS_BRIEF
+    /// measured once (100 blocks in 111 s; the model's default), ~75-85 reactive txs a day. With
+    /// the heartbeat answers that is a few lREACT a day by the documented fee formula (up to ~4.6
+    /// for Cron alone if every tick were the heaviest measured); unmeasured. Cron10000 (~3 h) is
+    /// the cheap fallback. Cron100 and below cost 10x+ more and are not used.
     uint256 internal constant CRON1000 = 0xe20b31294d84c3661ddc8f423abb9c70310d0cf172aa2714ead78029b325e3f4;
     uint256 internal constant CRON10000 = 0xd214e1d84db704ed42d37f538ea9bf71e44ba28bc1cc088b2f5deca654677a56;
 
@@ -37,16 +39,18 @@ library TestnetConfig {
     /// The cost is latency on the donor path only (reclaims, voided grants, epoch rolls); the
     /// reserve top-up path never waits.
     /// Each chain gets a heartbeat (a re-read) once this much time has passed since its last one,
-    /// on the next react: with Cron1000 every ~17 min that is within 40 + 17 = 57 min, so a lost
-    /// STOP press is carried back within about an hour even if nothing else happens on that chain
-    /// (test/ProductionTiming.t.sol measures it). About 3 callbacks per 51 min in an idle system.
+    /// on the next react: within 40 min + one Cron period P (in practice ceil(40 / P) * P: 51 min
+    /// at P = 17 min, 55.5 at 18.5). The re-read re-announces a lost STOP press at once, so a lost
+    /// press with an idle pressing agent reaches every chain within about that plus a minute of
+    /// delivery (test/ProductionTiming.t.sol sweeps P = 17-19.5 min: 51-59 min). About 3
+    /// callbacks per ~51-56 min in an idle system.
     uint64 internal constant HEARTBEAT = 40 minutes;
 
     uint64 internal constant WAIT_SEPOLIA = 16 minutes;
     uint64 internal constant WAIT_OP_STACK = 30 minutes;
 
     /// Production timing for a chain, derived from its confirmation wait so the ratios hold:
-    ///  - grantTimeout 10 min: a grant is answered within seconds; Cron (~17 min) is the clock.
+    ///  - grantTimeout 10 min: a grant is answered within seconds; Cron (~18.5 min) is the clock.
     ///  - verifyTimeout 5 min: one re-read round trip.
     ///  - reclaimTimeout = wait + 2 x verifyTimeout: an unanswered reclaim is closed only after its
     ///    return could have been confirmed (the core also never closes one whose return is pending).

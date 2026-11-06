@@ -76,7 +76,10 @@ contract NetworkHandler is Test {
 
     bool public immutable chaosOn;
     bool public immutable productionTiming;
-    uint256 public constant CRON_EVERY = 1020; // Cron1000 on Lasna: ~17 min
+    /// Cron1000 period in the production-timing mode: 1000 Lasna blocks at the 1.11 s per block
+    /// DOCS_BRIEF measured (100 blocks in 111 s) = 1,110 s = 18.5 min. Unmeasured as a Cron period;
+    /// tests sweep it with setCronEvery.
+    uint256 public cronEvery = 1110;
     uint64 public immutable startDay;
     uint256 internal callSeq;
 
@@ -153,7 +156,7 @@ contract NetworkHandler is Test {
         p.chains = new BudgetCore.ChainParams[](N);
         if (productionTiming_) {
             // The testnet values (TestnetConfig): waits 30/30/16 min, timeouts derived from them,
-            // a 1 h heartbeat; Cron ticks every 17 min (see settleProduction).
+            // a 40-min heartbeat; Cron ticks every `cronEvery` seconds (see settleProduction).
             p.chains[0] = TestnetConfig.chainParams(TestnetConfig.WAIT_OP_STACK);
             p.chains[1] = TestnetConfig.chainParams(TestnetConfig.WAIT_OP_STACK);
             p.chains[2] = TestnetConfig.chainParams(TestnetConfig.WAIT_SEPOLIA);
@@ -367,13 +370,17 @@ contract NetworkHandler is Test {
 
     /// Production pacing: `secs` seconds pass in 1-minute steps; everything queued is delivered
     /// each minute (callbacks and origin logs take seconds), and the core ticks only on Cron
-    /// boundaries (every CRON_EVERY seconds), as on Lasna with Cron1000.
+    /// boundaries (every `cronEvery` seconds), as on Lasna with Cron1000.
+    function setCronEvery(uint256 secs) external {
+        cronEvery = secs;
+    }
+
     function settleProduction(uint256 secs) public {
         for (uint256 t; t < secs; t += 60) {
             deliverAll();
-            uint256 before = block.timestamp / CRON_EVERY;
+            uint256 before = block.timestamp / cronEvery;
             vm.warp(block.timestamp + 60);
-            if (block.timestamp / CRON_EVERY != before) tick();
+            if (block.timestamp / cronEvery != before) tick();
         }
         deliverAll();
     }

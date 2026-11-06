@@ -46,7 +46,7 @@ MUTANTS = [
      "src/BudgetCore.sol", "        if (heartbeat != 0) {\n            uint256 beats;", "        if (false) {\n            uint256 beats;"),
     ("Z2", "wallet: a re-read doesn't re-announce an unacknowledged press",
      "src/SpendWallet.sol",
-     "        _echoStop(); // the coordinator's periodic heartbeat is a verify: a lost press rides on it\n",
+     "        _echoStopForCoordinator(); // the coordinator's heartbeat is a verify: a lost press rides on it\n",
      ""),
     ("Z3", "core: no limit of one unanswered grant per chain",
      "src/BudgetCore.sol", "        return inflight[c] == 0;", "        return true;"),
@@ -67,8 +67,16 @@ MUTANTS = [
      "src/BudgetCore.sol",
      "            if (w.amount != 0) owed += w.amount > chunk ? w.amount : chunk;",
      "            if (w.amount != 0 && owed == 0) owed = w.amount;"),
+    ("W16", "wallet: the coordinator's own re-read echo is rate-limited like an agent's",
+     "src/SpendWallet.sol",
+     "    function _echoStopForCoordinator() internal virtual {\n        if (lastPressAt > pressAckedAt) {",
+     "    function _echoStopForCoordinator() internal virtual {\n        if (lastPressAt > pressAckedAt && block.timestamp >= uint256(stopEchoAt) + SHORT_REARM) {"),
+    ("J2", "core: no backoff handling for epoch resends (only the grant half)",
+     "src/BudgetCore.sol", "        if (epochTries[c] > cap) epochTries[c] = cap;\n", ""),
+    ("W17", "core: an origin-only event resets the backoff fully (round-4 behaviour)",
+     "src/BudgetCore.sol", "        uint8 cap = answer ? 0 : ALIVE_CAP;", "        uint8 cap = 0;"),
     ("W14", "core: no backoff reset when a chain shows it is alive",
-     "src/BudgetCore.sol", "        epochTries[c] = 0;\n        uint256 id = _inflightId[c];", "        return;\n        uint256 id = _inflightId[c];"),
+     "src/BudgetCore.sol", "        uint8 cap = answer ? 0 : ALIVE_CAP;", "        uint8 cap = 255;"),
 ]
 
 

@@ -123,6 +123,8 @@ abstract contract BudgetCore {
     /// event). STOP/unstop messages go first. Gas measured in test/Gas.t.sol.
     uint256 public constant MAX_SENDS = 4;
     uint256 public constant SCAN = 4;
+    /// See _alive: retry backoff kept at most 2^ALIVE_CAP while a chain shows only origin events.
+    uint8 public constant ALIVE_CAP = 2;
     /// Caps above this are treated as this (it is ~1.3e36 base units; it only bounds packing).
     uint256 public constant MAX_CAP = type(uint120).max;
 
@@ -207,7 +209,7 @@ abstract contract BudgetCore {
     // react() as well as on Cron ticks.
 
     function _onShort(uint8 c, uint64 day, uint256 shortBy) internal {
-        _alive(c);
+        _alive(c, false);
         if (!frozen && day == _today()) {
             Want storage w = want[c];
             if (!_wanting(c, day) || w.amount < shortBy) w.amount = uint128(shortBy);
@@ -218,7 +220,7 @@ abstract contract BudgetCore {
     }
 
     function _onLowWater(uint8 c, uint64 day) internal {
-        _alive(c);
+        _alive(c, false);
         if (!frozen && day == _today()) {
             if (!_wanting(c, day)) want[c] = Want(day, uint64(block.timestamp), uint128(cap / 10));
         }
@@ -226,7 +228,7 @@ abstract contract BudgetCore {
     }
 
     function _onGrantApplied(uint8 c, uint256 grantId) internal virtual {
-        _alive(c);
+        _alive(c, true);
         Grant storage g = grants[grantId];
         if (g.st != 0 && g.chain == c) {
             _answered(g);
@@ -236,7 +238,7 @@ abstract contract BudgetCore {
     }
 
     function _onGrantNotApplied(uint8 c, uint256 grantId, uint64 ts) internal {
-        _alive(c);
+        _alive(c, true);
         Grant storage g = grants[grantId];
         if (g.st != 0 && g.chain == c) {
             _answered(g);
@@ -246,7 +248,7 @@ abstract contract BudgetCore {
     }
 
     function _onCancelAck(uint8 c, uint256 grantId, bool applied, uint64 ts) internal {
-        _alive(c);
+        _alive(c, true);
         Grant storage g = grants[grantId];
         if (g.st != 0 && g.chain == c) {
             _answered(g);
@@ -260,7 +262,7 @@ abstract contract BudgetCore {
     }
 
     function _onReclaimed(uint8 c, uint256 reqId, uint256 amount, uint64 ts) internal {
-        _alive(c);
+        _alive(c, true);
         Reclaim storage r = reclaims[reqId];
         if (r.sentAt != 0 && r.chain == c) {
             // The donor's slot stays taken until this return is credited or dropped, so the
@@ -272,13 +274,13 @@ abstract contract BudgetCore {
     }
 
     function _onRolled(uint8 c, uint64 e, uint64 day, uint256 r0, uint256 r1, uint64 ts) internal {
-        _alive(c);
+        _alive(c, true);
         _admit(K_ROLL, c, e, day, r0, r1, ts);
         _poke();
     }
 
     function _onEpochAck(uint8 c, uint64 e, uint64 ts) internal {
-        _alive(c);
+        _alive(c, true);
         if (e > epochAcked[c]) _admit(K_EPOCH, c, e, 0, 0, 0, ts);
         _poke();
     }
@@ -287,7 +289,7 @@ abstract contract BudgetCore {
     /// re-freeze after an unstop. Every new press opens a new frozen epoch, even when already
     /// frozen: an unstop issued before this press names an older epoch and can never lift it.
     function _onStopPressed(uint8 c, uint64 mark) internal {
-        _alive(c);
+        _alive(c, false);
         if (mark > pressSeenAt[c]) {
             pressSeenAt[c] = mark;
             frozen = true;
@@ -301,7 +303,7 @@ abstract contract BudgetCore {
     }
 
     function _onVerified(uint8 c, Echo memory v) internal {
-        _alive(c);
+        _alive(c, true);
         bytes32 k = _key(v.kind, c, v.key);
         Pending storage p = pending[k];
         if (p.kind != 0) {
@@ -528,14 +530,21 @@ abstract contract BudgetCore {
         _beatDue[c] = nowTs + heartbeat;
     }
 
-    /// Any event from chain c shows it is alive: the backoff of its retries starts over, so a
-    /// chain that was unreachable for hours is retried at once, not after up to 32 timeouts.
-    function _alive(uint8 c) internal virtual {
-        epochTries[c] = 0;
+    /// Retries to chain c (its in-flight grant's cancels, its epoch resends) back off up to 32x.
+    /// An event that answers a callback (`answer`: applied/not applied, cancel ack, reclaimed,
+    /// rolled, epoch ack, verified) proves callbacks land again: the backoff starts over. An
+    /// origin-only event (Short, LowWater, StopPressed) proves only that the chain itself is up,
+    /// not that its front gets callbacks: the backoff is capped at ALIVE_CAP doublings (4 x the
+    /// timeout, 40 min in production) instead. So a chain back from an outage is retried within
+    /// one capped backoff, and a front that stays dead while its agent is active costs one cancel
+    /// per 40 min, not one per 10 min.
+    function _alive(uint8 c, bool answer) internal virtual {
+        uint8 cap = answer ? 0 : ALIVE_CAP;
+        if (epochTries[c] > cap) epochTries[c] = cap;
         uint256 id = _inflightId[c];
         if (id != 0) {
             Grant storage g = grants[id];
-            if (!g.answered && g.tries != 0) g.tries = 0;
+            if (!g.answered && g.tries > cap) g.tries = cap;
         }
     }
 
