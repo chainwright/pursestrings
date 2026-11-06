@@ -9,8 +9,8 @@ the mutants, what is still not covered, and what the spike changed in the design
 
 ```
 forge build
-forge test             # invariants, directed scenarios, liveness, gas, Reactive glue (~25 s)
-script/mutants.sh      # full suite x 2 seeds per mutant: each must fail, the real contracts must pass (~30 min)
+forge test             # invariants, directed scenarios, liveness, production timing, gas, Reactive glue (~30 s)
+script/mutants.sh      # full suite x 2 seeds per mutant: each must fail, the real contracts must pass (30-60 min, machine-dependent)
 ```
 
 Tested by fuzz + mutation (not proven), against our own model of the network. MIT licensed.
@@ -35,7 +35,7 @@ What the tests do and don't show:
   It also keeps a balance of its own (send lREACT to it); the system contract collects fees from
   that balance with `pay()`, and anyone can clear a debt with `coverDebt()`. A contract in debt
   gets no `react()` calls, so STOP would stop propagating: keep it funded.
-  Cost drivers: Cron1000 (~78 ticks a day), the hourly heartbeat (a re-read to each chain, plus the
+  Cost drivers: Cron1000 (~78 ticks a day), the heartbeat (a re-read to each chain every 40-57 min, plus the
   `react()` for its answer), and one `react()` per wallet event. Estimated roughly 1-5 lREACT a day
   from the documented fee formula and our Foundry gas figures; **unmeasured**.
 - **Callback front on each destination chain:** fund with

@@ -17,7 +17,7 @@
 # For each mutant the table lists every check that failed (across both seeds) and whether any of
 # them was (a) "paid out more than the owner's cap": a real over-cap payout counted by the token.
 #
-#   script/mutants.sh                              # everything, seeds 0x5eed and 0x1234 (~1 h)
+#   script/mutants.sh                              # everything, seeds 0x5eed and 0x1234 (30-60 min)
 #   SEEDS="0x1 0x2 0x3" script/mutants.sh
 #   ONLY="0 4 Y6 Z3" script/mutants.sh             # a subset
 #   RUNS=512 DEPTH=300 script/mutants.sh           # a larger invariant budget
