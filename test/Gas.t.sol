@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import {Test, console2} from "forge-std/Test.sol";
+import {Test, Vm, console2} from "forge-std/Test.sol";
 import {BudgetCore} from "../src/BudgetCore.sol";
 import {SpendWallet} from "../src/SpendWallet.sol";
 import {Vault} from "../src/Vault.sol";
@@ -60,6 +60,16 @@ contract StuffedReactive is PursestringsReactive {
             uint256 id = nextId++;
             reclaims[id] = Reclaim(uint8(i % nChains), true, t, 1, 1e6);
             _liveReclaims.push(id);
+        }
+    }
+
+    /// Stuffed entries whose retry has never been sent (grant never cancelled, re-read never asked).
+    function unserviced() external view returns (uint256 g, uint256 p) {
+        for (uint256 i; i < _liveGrants.length; i++) {
+            if (grants[_liveGrants[i]].st == G_SENT) g++;
+        }
+        for (uint256 i; i < _pendingKeys.length; i++) {
+            if (pending[_pendingKeys[i]].verifySentAt == 0) p++;
         }
     }
 
@@ -239,6 +249,48 @@ contract GasTest is Test {
         wallet.flush();
         assertEq(wallet.stranded(), 0);
         assertEq(token.balanceOf(address(vault)), 1_000e6);
+    }
+
+    /// F12: a token that delivers less than asked (fee-on-transfer) creates no allowance; what did
+    /// arrive goes back to the vault, and the wallet's tokens stay exactly unspent + stranded.
+    function test_shortDeliveryCreatesNoAllowance() public {
+        vm.warp(T0 + 12 hours);
+        _deployWallet();
+        uint64 d = uint64(block.timestamp / 1 days);
+        token.setFee(address(vault), 100); // the vault's transfers deliver 1% less
+        vm.recordLogs();
+        _grant(d, 5e6, 0);
+        assertEq(wallet.unspentOf(d), 0, "allowance from a short delivery");
+        assertEq(token.balanceOf(address(wallet)), wallet.liveUnspent() + wallet.stranded(), "tokens not accounted for");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool notApplied;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] == IWalletEvents.GrantNotApplied.selector) notApplied = true;
+        }
+        assertTrue(notApplied, "the coordinator must hear 'not applied' to get its refund");
+    }
+
+    /// Bounded work carries over: with more due entries than one call may look at (12 grants to
+    /// cancel, 12 returns to re-read, SCAN = 4), every one is serviced within a few Cron ticks.
+    function test_retryListsCarryOverAcrossTicks() public {
+        vm.warp(T0 + 12 hours);
+        (StuffedReactive rc, GasSystem sys) = _stuffed(12, 12, 0);
+        LogRecord memory cron;
+        cron.chainId = block.chainid;
+        cron.contractAddress = 0x0000000000000000000000000000000000fffFfF;
+        cron.topic0 = TestnetConfig.CRON1000;
+        uint256 ticks;
+        for (; ticks < 40; ticks++) {
+            (uint256 g, uint256 p) = rc.unserviced();
+            if (g == 0 && p == 0) break;
+            vm.prank(address(sys));
+            rc.react(cron);
+            vm.warp(block.timestamp + 300);
+        }
+        (uint256 gLeft, uint256 pLeft) = rc.unserviced();
+        console2.log("Cron ticks until every stuffed entry was serviced", ticks);
+        assertEq(pLeft, 0, "a due re-read was never asked (pending cursor stuck?)");
+        assertEq(gLeft, 0, "a due cancel was never sent (grant cursor stuck?)");
     }
 
     // ---------------------------------------------------------------- react()

@@ -367,16 +367,18 @@ abstract contract BudgetCore {
 
         // 1b. heartbeat: one chain per beat, round robin, so each chain hears from the core at
         //     least every `heartbeat` even when nothing else is due (Cron drives this).
-        if (heartbeat != 0 && nowTs >= _nextBeat && _canSend()) _beat(nowTs);
+        if (heartbeat != 0 && nowTs >= _nextBeat && _canSendBackground()) _beat(nowTs);
 
         // 2. returns old enough to confirm: ask the origin chain to re-read the fact
+        //    (at most 2 per call, so cancels always get a share of the budget)
         uint256 n = _pendingKeys.length;
         if (n > 0) {
             uint256 i = _pCur % n;
+            uint256 stopAt = _sendsLeft > 3 ? _sendsLeft - 2 : 1;
             for (uint256 s; s < SCAN && s < n; s++) {
                 bytes32 k = _pendingKeys[i];
                 if (_waitPassed(k, nowTs)) {
-                    if (!_canSend()) break;
+                    if (_sendsLeft <= stopAt || !_canSendBackground()) break;
                     _onMatured(k);
                 }
                 i = (i + 1) % n;
@@ -399,7 +401,7 @@ abstract contract BudgetCore {
                 }
                 if (nowTs >= g.sentAt + _backoff(grantTimeout, g.tries) && pending[_key(K_VOID, g.chain, id)].kind == 0)
                 {
-                    if (!_canSend()) break;
+                    if (!_canSendBackground()) break;
                     _sendCancel(id);
                 }
                 i++;
@@ -483,6 +485,12 @@ abstract contract BudgetCore {
         _send(c, abi.encodeCall(IWalletInbox.verify, (K_EPOCH, epoch)));
         _beatChain = uint8((uint256(c) + 1) % nChains);
         _nextBeat = nowTs + heartbeat / nChains;
+    }
+
+    /// Heartbeats, re-reads and cancels leave one send per call for serving (grants and
+    /// reclaims) while not frozen, so a backlog of re-reads can't starve the user-visible path.
+    function _canSendBackground() internal view returns (bool) {
+        return _sendsLeft > (frozen ? 1 : 2);
     }
 
     function _canSend() internal view returns (bool) {

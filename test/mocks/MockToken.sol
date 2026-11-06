@@ -27,11 +27,18 @@ contract MockToken {
         blocked[a] = b;
     }
 
+    /// Test fault: transfers sent by `a` deliver `bps`/10000 less than asked (fee-on-transfer).
+    mapping(address => uint256) public feeBps;
+
+    function setFee(address a, uint256 bps) external {
+        feeBps[a] = bps;
+    }
+
     function transfer(address to, uint256 amount) external returns (bool) {
         require(!blocked[to], "blocked");
         require(balanceOf[msg.sender] >= amount, "balance");
         balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
+        balanceOf[to] += amount - amount * feeBps[msg.sender] / 10_000;
         address v = vaultOf[msg.sender];
         if (v != address(0) && to != v) {
             outflow[msg.sender][uint64(block.timestamp / DAY)] += amount;

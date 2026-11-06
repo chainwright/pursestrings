@@ -18,6 +18,7 @@ contract DirectedTest is Test {
     bytes32 immutable RECLAIM = bytes32(SpendWallet.applyReclaim.selector);
     bytes32 immutable CANCEL = bytes32(SpendWallet.applyCancel.selector);
     bytes32 immutable VERIFY = bytes32(SpendWallet.verify.selector);
+    bytes32 immutable EPOCH = bytes32(SpendWallet.applyEpoch.selector);
     bytes32 immutable RECLAIMED = IWalletEvents.Reclaimed.selector;
     bytes32 immutable STOP_PRESSED = IWalletEvents.StopPressed.selector;
     bytes32 immutable UNSTOP = IConsoleEvents.Unstop.selector;
@@ -140,6 +141,31 @@ contract DirectedTest is Test {
         assertEq(h.count(true, VERIFY, 0), 1, "setup: re-read requested");
         h.reorgFirst(RECLAIM, 0, 30, true); // branch 2, then the message is lost for good
         h.deliverOnBranch(0); // the re-read is served from branch 2
+        h.deliverAll();
+        _spendAll();
+        _assertSafe();
+    }
+
+    /// Rule 2 on the slowest chain: each chain's wait is its own. Chain 2 waits 180 s (chain 0
+    /// only 60). A reclaim on chain 2 is re-included on a branch that lives 120 s (shallower than
+    /// chain 2's wait, deeper than chain 0's) and the re-read 61 s later is served from it. That
+    /// fact is 61 s old: old enough by chain 0's wait, not by chain 2's. No credit.
+    function test_rule2_slowChainUsesItsOwnWait() public {
+        _short(1, 10e6);
+        _short(2, 10e6);
+        h.settleFor(2);
+        vm.warp(block.timestamp + 700);
+        h.tick();
+        _shortDelivered(0, 8e6); // reclaims to chains 1 and 2
+        h.dropFirst(true, RECLAIM, 1);
+        h.reorgFirst(RECLAIM, 2, 30, false); // branch 1, the message stays queued
+        h.deliverFirst(false, RECLAIMED, 2); // the core admits the return as pending
+        vm.warp(block.timestamp + 181);
+        h.tick(); // chain 2's wait has passed: re-read requested
+        assertEq(h.count(true, VERIFY, 2), 1, "setup: re-read requested");
+        h.reorgFirst(RECLAIM, 2, 120, true); // branch 2: lives 120 s, then the reclaim is lost
+        vm.warp(block.timestamp + 61);
+        h.deliverOnBranch(2); // the re-read sees a 61-second-old fact
         h.deliverAll();
         _spendAll();
         _assertSafe();
@@ -339,6 +365,37 @@ contract DirectedTest is Test {
         h.releaseHeld();
         h.deliverAll();
         h.healAndSettle();
+        _assertSafe();
+    }
+
+    /// A wallet ignores an epoch message older than its own epoch: a delayed "unfrozen" from
+    /// before a later STOP must not unfreeze it.
+    function test_stop_staleUnfreezeMessageIsIgnored() public {
+        h.ownerPressStop(0);
+        h.deliverAll(); // epoch 1, frozen everywhere
+        h.ownerUnstop(core.epoch());
+        h.deliverFirst(false, UNSTOP, HOME); // epoch 2, unfrozen: messages to every chain queued
+        h.holdFirst(true, EPOCH, 0); // chain 0's "epoch 2, unfrozen" is delayed
+        h.deliverAll();
+        h.ownerPressStop(1);
+        h.deliverAll(); // epoch 3, frozen, reaches chain 0
+        assertTrue(_w(0).frozen(), "setup: chain 0 frozen in epoch 3");
+        h.releaseHeld(); // the stale unfreeze arrives
+        h.deliverAll();
+        assertTrue(_w(0).frozen(), "a stale epoch message unfroze the wallet");
+        h.healAndSettle();
+        _assertSafe();
+    }
+
+    /// An epoch acknowledgement from an orphaned block is not trusted: the coordinator re-reads
+    /// it, finds the wallet still on the old epoch, and resends until the freeze really lands.
+    function test_stop_orphanedEpochAckIsNotTrusted() public {
+        _fundTwo();
+        h.ownerPressStop(1);
+        h.deliverFirst(false, STOP_PRESSED, 1); // epoch 1: freeze messages queued
+        h.reorgFirst(EPOCH, 0, 0, true); // chain 0's freeze runs on an orphaned block, then is lost
+        h.healAndSettle();
+        assertTrue(_w(0).frozen(), "chain 0 never froze: an orphaned ack was trusted");
         _assertSafe();
     }
 

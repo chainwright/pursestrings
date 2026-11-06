@@ -90,11 +90,15 @@ contract PursestringsInvariantTest is StdInvariant, Test {
         }
     }
 
-    /// Every unit of allowance is backed by a token in the wallet.
+    /// Token conservation in every wallet: its balance is exactly its unspent allowance plus what
+    /// it owes back to the vault (`stranded`). More allowance than tokens would be unbacked
+    /// allowance; more tokens than both would be tokens the wallet forgot it owes.
     function invariant_allowanceBackedByTokens() public view {
         for (uint256 c; c < 3; c++) {
             SpendWallet w = h.wallets(c);
-            assertLe(w.liveUnspent(), MockToken(address(h.tokens(c))).balanceOf(address(w)), "allowance > balance");
+            uint256 bal = MockToken(address(h.tokens(c))).balanceOf(address(w));
+            assertLe(w.liveUnspent() + w.stranded(), bal, "allowance > balance");
+            assertGe(w.liveUnspent() + w.stranded(), bal, "tokens neither allowance nor owed to the vault");
         }
     }
 }

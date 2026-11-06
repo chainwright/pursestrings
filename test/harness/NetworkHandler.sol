@@ -520,9 +520,10 @@ contract NetworkHandler is Test {
             }
         }
         for (uint8 c; c < N; c++) {
-            if (wallets[c].liveUnspent() > tokens[c].balanceOf(address(wallets[c]))) {
-                return "allowance > balance";
-            }
+            uint256 bal = tokens[c].balanceOf(address(wallets[c]));
+            uint256 owed = wallets[c].liveUnspent() + wallets[c].stranded();
+            if (owed > bal) return "allowance > balance";
+            if (owed < bal) return "tokens neither allowance nor owed to the vault";
         }
         return "";
     }
