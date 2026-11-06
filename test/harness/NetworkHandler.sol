@@ -105,6 +105,7 @@ contract NetworkHandler is Test {
     mapping(uint256 => bool) internal gCounted;
     uint256[3] public lastNeed; // last refused amount per chain (liveness test)
     uint64[3] public partitionUntil;
+    uint64[3] public deadUntil; // callbacks to this chain are lost (front in debt, proxy down)
 
     // ---- coverage counters
     uint256 public paysOk;
@@ -123,6 +124,7 @@ contract NetworkHandler is Test {
     uint256 public outages;
     uint256 public delayed;
     uint256 public partitions;
+    uint256 public deadChains;
     uint256 public heals;
     uint256 public healsWhileStopped;
     uint256 public staleGrants; // grants delivered with an epoch older than the wallet's
@@ -254,7 +256,7 @@ contract NetworkHandler is Test {
     /// Faults and owner actions; disabled in the liveness model.
     function chaos(uint256 s) external {
         if (!chaosOn) return;
-        uint256 op = s % 15;
+        uint256 op = s % 16;
         uint256 r = s >> 8;
         if (op == 0) {
             if (_qlen() > 0) {
@@ -313,6 +315,11 @@ contract NetworkHandler is Test {
                 late[i] = late[late.length - 1];
                 late.pop();
             }
+        } else if (op == 15) {
+            // a destination chain is dead for 1-6 hours: every callback to it is lost
+            uint8 c = uint8(r % N);
+            deadUntil[c] = uint64(block.timestamp + _bound(r >> 8, 1 hours, 6 hours));
+            deadChains++;
         } else if (op == 14) {
             // a destination chain is unreachable for 1-30 min (proxy down, congestion, payer in
             // debt): every callback created meanwhile is held back
@@ -369,6 +376,7 @@ contract NetworkHandler is Test {
         delete late;
         for (uint8 c; c < N; c++) {
             partitionUntil[c] = 0;
+            deadUntil[c] = 0;
         }
         delete branches;
         for (uint256 round; round < HEAL_ROUNDS; round++) {
@@ -463,6 +471,11 @@ contract NetworkHandler is Test {
         _removeAt(i);
         require(_branchAlive(chain), "no live branch");
         _deliver(m, true);
+    }
+
+    /// Every callback to chain c is lost for `secs` seconds.
+    function killChain(uint8 c, uint256 secs) external {
+        deadUntil[c] = uint64(block.timestamp + secs);
     }
 
     function ownerWithdrawVault(uint8 c) external {
@@ -731,6 +744,10 @@ contract NetworkHandler is Test {
     }
 
     function _push(bool toWallet, uint8 c, bytes memory data) internal {
+        if (toWallet && block.timestamp < deadUntil[c]) {
+            dropped++;
+            return;
+        }
         if (toWallet && block.timestamp < partitionUntil[c] && late.length < 64) {
             late.push(Msg(toWallet, c, data));
             return;

@@ -45,7 +45,8 @@ contract StuffedReactive is PursestringsReactive {
         uint64 t = _today();
         for (uint256 i; i < nGrants; i++) {
             uint256 id = nextId++;
-            grants[id] = Grant(uint8(i % nChains), G_SENT, 0, t, epoch, 1, 1e6);
+            grants[id] = Grant(uint8(i % nChains), G_SENT, 0, t, epoch, 1, 1e6, false);
+            inflight[uint8(i % nChains)]++;
             _liveGrants.push(id);
         }
         for (uint256 i; i < nPending; i++) {
@@ -330,19 +331,5 @@ contract GasTest is Test {
         }
         console2.log("worst react() gas", worst, "limit asserted", LIMIT_REACT);
         assertLe(worst, LIMIT_REACT, "react() too heavy");
-    }
-
-    /// With a dead destination, unacknowledged grants pile up only to MAX_LIVE_GRANTS: then the
-    /// core stops granting instead of growing its retry list.
-    function test_liveGrantsCapped() public {
-        vm.warp(T0 + 12 hours);
-        (StuffedReactive rc, GasSystem sys) = _stuffed(32, 0, 0);
-        uint64 t = uint64(block.timestamp / 1 days);
-        uint256 before = sys.n();
-        vm.prank(address(sys));
-        rc.react(_walletLog(0, IWalletEvents.Short.selector, abi.encode(t, 5e6, uint64(block.timestamp))));
-        assertEq(rc.liveGrantCount(), 32, "a grant past the cap");
-        assertEq(rc.poolOf(t), 20e6, "pool untouched");
-        assertGe(sys.n(), before); // cancels may go out; no new grant
     }
 }

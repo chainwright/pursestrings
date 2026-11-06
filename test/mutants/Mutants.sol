@@ -69,6 +69,7 @@ contract MutantCore is BudgetCoreHarness {
             bytes32 k = _key(K_VOID, g.chain, grantId);
             if (!credited[k]) {
                 credited[k] = true;
+                _answered(g);
                 g.st = G_REFUNDED;
                 _credit(K_VOID, g.chain, g.day, g.amount);
             }
@@ -110,7 +111,8 @@ contract MutantCore is BudgetCoreHarness {
         DayBook storage b = _days[d];
         b.dry[c] = false;
         uint256 id = nextId++;
-        grants[id] = Grant(c, G_SENT, 0, d, epoch, uint64(block.timestamp), uint128(amount));
+        grants[id] = Grant(c, G_SENT, 0, d, epoch, uint64(block.timestamp), uint128(amount), false);
+        inflight[c]++;
         _liveGrants.push(id);
         emit GrantSent(id, c, d, amount, epoch);
         _send(c, abi.encodeCall(IWalletInbox.applyGrant, (id, d, amount, epoch)));
@@ -159,6 +161,7 @@ contract MutantCore is BudgetCoreHarness {
             _closeReclaim(id);
             _credit(kind, c, day, a0);
         } else if (kind == K_VOID) {
+            _answered(grants[id]);
             grants[id].st = G_REFUNDED;
             _credit(kind, c, day, a0);
         } else if (kind == K_ROLL) {

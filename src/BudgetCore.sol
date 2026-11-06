@@ -74,6 +74,9 @@ abstract contract BudgetCore {
         uint64 epoch;
         uint64 sentAt;
         uint128 amount;
+        /// The wallet has answered (applied / not applied / cancel ack). Until then the grant is
+        /// "in flight" and its chain gets no other grant.
+        bool answered;
     }
 
     struct Reclaim {
@@ -111,9 +114,6 @@ abstract contract BudgetCore {
     uint256 public constant SCAN = 4;
     /// Caps above this are treated as this (it is ~1.3e36 base units; it only bounds packing).
     uint256 public constant MAX_CAP = type(uint120).max;
-    /// New grants are refused while this many are unacknowledged (e.g. a destination chain is
-    /// dead), so the retry lists can't grow without bound.
-    uint256 public constant MAX_LIVE_GRANTS = 32;
 
     uint8 public immutable nChains;
     uint256 public immutable keepFloor;
@@ -152,6 +152,9 @@ abstract contract BudgetCore {
     mapping(bytes32 => bool) public credited;
 
     mapping(uint8 => Want) public want;
+    /// Grants per chain the wallet hasn't answered yet: at most one. A chain whose callbacks are
+    /// lost (front in debt, proxy down) can then absorb at most one grant, not the day's budget.
+    mapping(uint8 => uint256) public inflight;
     uint8 internal _rr;
 
     /// Callback requests still allowed in this call, plus one (never stored as zero, so resetting
@@ -214,19 +217,26 @@ abstract contract BudgetCore {
 
     function _onGrantApplied(uint8 c, uint256 grantId) internal virtual {
         Grant storage g = grants[grantId];
-        if (g.st != 0 && g.chain == c && (g.st == G_SENT || g.st == G_CANCELLING)) g.st = G_APPLIED;
+        if (g.st != 0 && g.chain == c) {
+            _answered(g);
+            if (g.st == G_SENT || g.st == G_CANCELLING) g.st = G_APPLIED;
+        }
         _poke();
     }
 
     function _onGrantNotApplied(uint8 c, uint256 grantId, uint64 ts) internal {
         Grant storage g = grants[grantId];
-        if (g.st != 0 && g.chain == c) _admit(K_VOID, c, grantId, g.day, g.amount, 0, ts);
+        if (g.st != 0 && g.chain == c) {
+            _answered(g);
+            _admit(K_VOID, c, grantId, g.day, g.amount, 0, ts);
+        }
         _poke();
     }
 
     function _onCancelAck(uint8 c, uint256 grantId, bool applied, uint64 ts) internal {
         Grant storage g = grants[grantId];
         if (g.st != 0 && g.chain == c) {
+            _answered(g);
             if (applied) {
                 if (g.st != G_REFUNDED) g.st = G_APPLIED;
             } else {
@@ -286,6 +296,7 @@ abstract contract BudgetCore {
                     _credit(K_RECLAIM, c, p.day, v.a0);
                 } else if (v.kind == K_VOID) {
                     Grant storage g = grants[v.key];
+                    _answered(g);
                     g.st = G_REFUNDED;
                     _credit(K_VOID, c, g.day, g.amount);
                 } else if (v.kind == K_ROLL) {
@@ -425,8 +436,8 @@ abstract contract BudgetCore {
             uint256 share = _days[d].cap / (uint256(nChains) + 1);
             uint256 mask = _pregranted[d];
             for (uint8 c; c < nChains && share > 0; c++) {
-                if (mask & (1 << c) != 0) continue;
-                if (!_canGrant()) break;
+                if (mask & (1 << c) != 0 || !_inflightFree(c)) continue;
+                if (!_canSend()) break;
                 mask |= 1 << c;
                 _grant(c, d, share < _days[d].pool ? share : _days[d].pool);
             }
@@ -444,11 +455,11 @@ abstract contract BudgetCore {
         _rr = uint8((uint256(_rr) + 1) % nChains); // rotate, so no chain is always served first
         for (uint8 k; k < nChains; k++) {
             uint8 c = uint8((uint256(start) + k) % nChains);
-            if (!_wanting(c, t)) continue;
+            if (!_wanting(c, t) || !_inflightFree(c)) continue;
             Want storage w = want[c];
             uint256 need = w.amount;
             if (b.pool > 0) {
-                if (!_canGrant()) return;
+                if (!_canSend()) return;
                 uint256 give = need > chunk ? need : chunk;
                 if (give > b.pool) give = b.pool;
                 _grant(c, t, give);
@@ -478,8 +489,16 @@ abstract contract BudgetCore {
         return _sendsLeft > 1;
     }
 
-    function _canGrant() internal view returns (bool) {
-        return _sendsLeft > 1 && _liveGrants.length < MAX_LIVE_GRANTS;
+    /// At most one unanswered grant per chain.
+    function _inflightFree(uint8 c) internal view virtual returns (bool) {
+        return inflight[c] == 0;
+    }
+
+    function _answered(Grant storage g) internal {
+        if (!g.answered) {
+            g.answered = true;
+            inflight[g.chain]--;
+        }
     }
 
     /// Every outgoing message goes through here, so the per-call budget always holds.
@@ -506,7 +525,8 @@ abstract contract BudgetCore {
         b.held[c] += amount;
         b.dry[c] = false;
         uint256 id = nextId++;
-        grants[id] = Grant(c, G_SENT, 0, d, epoch, uint64(block.timestamp), uint128(amount));
+        grants[id] = Grant(c, G_SENT, 0, d, epoch, uint64(block.timestamp), uint128(amount), false);
+        inflight[c]++;
         _liveGrants.push(id);
         emit GrantSent(id, c, d, amount, epoch);
         _send(c, abi.encodeCall(IWalletInbox.applyGrant, (id, d, amount, epoch)));

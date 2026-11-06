@@ -155,6 +155,22 @@ contract ReactiveGlueTest is Test {
         assertEq(rc.heldOf(t, 0), wallets[0].unspentOf(t), "books match the wallet");
     }
 
+    /// R2-2: while a chain's grant is unanswered, that chain gets no other grant, however often
+    /// its agent asks; once the wallet answers, it can be served again.
+    function test_oneUnansweredGrantPerChain() public {
+        for (uint256 k; k < 5; k++) {
+            _react(_log(0, IWalletEvents.Short.selector, abi.encode(_today(), 2e6, uint64(block.timestamp))));
+            vm.warp(block.timestamp + 301);
+        }
+        assertEq(_count(SpendWallet.applyGrant.selector), 1, "a second grant while the first is unanswered");
+        assertEq(rc.inflight(0), 1);
+        assertEq(rc.poolOf(_today()), CAP - 2e6, "only one grant's worth left the pool");
+        uint256 before = sys.callbacks();
+        _pump(); // the wallet applies it and answers; the still-open want is served in that react()
+        assertGt(_count(SpendWallet.applyGrant.selector), 1, "served again after the answer");
+        assertGt(sys.callbacks(), before);
+    }
+
     // --------------------------------------------------------------- Cron
 
     /// A Cron tick alone (no origin event) drives the loop: late in the day it pre-grants tomorrow.

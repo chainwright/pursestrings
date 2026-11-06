@@ -369,6 +369,29 @@ contract DirectedTest is Test {
         _assertSafe();
     }
 
+    /// The judge's R2-2 scenario: every callback to chain 2 is lost (its front is in debt) while
+    /// its agent keeps asking. Chain 2 absorbs at most one grant; healthy chain 0 is still served.
+    function test_deadChainAbsorbsAtMostOneGrant() public {
+        h.killChain(2, 1 days);
+        for (uint256 r; r < 40; r++) {
+            h.payExact(2, 1e6);
+            h.deliverAll();
+            vm.warp(block.timestamp + 301);
+            h.tick();
+            h.deliverAll();
+        }
+        uint64 t = _today();
+        assertLe(core.heldOf(t, 2), 2e6, "dead chain 2 absorbed more than one grant");
+        assertGe(core.poolOf(t), 18e6, "the pool drained into the dead chain");
+        bool paid;
+        for (uint256 r; r < 3 && !paid; r++) {
+            paid = h.payExact(0, 1e6);
+            h.settleFor(1);
+        }
+        assertTrue(paid, "healthy chain 0 starved by dead chain 2");
+        _assertSafe();
+    }
+
     /// A grant from a vault that can't cover it doesn't apply.
     function test_unfundedGrantDoesNotApply() public {
         h.ownerWithdrawVault(0);

@@ -112,6 +112,16 @@ contract PursestringsLivenessTest is Test {
     uint256 internal constant STARVE = 6;
 
     function testFuzz_liveness_shortChainGetsServed(uint256 seed) public {
+        _liveness(seed, false);
+    }
+
+    /// The same with chain 2 dead for the whole measured period (every callback to it lost) while
+    /// its agent keeps asking: chains 0 and 1 must still not starve (R2-2).
+    function testFuzz_liveness_othersServedWhileOneChainIsDead(uint256 seed) public {
+        _liveness(seed, true);
+    }
+
+    function _liveness(uint256 seed, bool chain2Dead) internal {
         vm.warp(1_800_000_000 - (1_800_000_000 % 1 days) + 6 hours); // 06:00, far from midnight
         NetworkHandler h = new NetworkHandler(0, false);
         for (uint256 i; i < 60; i++) {
@@ -124,6 +134,11 @@ contract PursestringsLivenessTest is Test {
             else vm.warp(block.timestamp + ((s >> 8) % 120));
         }
         h.settle();
+        uint256 held2AtDeath;
+        if (chain2Dead) {
+            h.killChain(2, 1 days);
+            held2AtDeath = h.core().heldOf(h.core().today(), 2);
+        }
 
         uint256[3] memory starved; // consecutive rounds refused while budget was available
         uint256 servedAfterShort;
@@ -134,7 +149,17 @@ contract PursestringsLivenessTest is Test {
                     starved[c] = 0;
                     continue;
                 }
-                bool available = _slack(h, c) >= need;
+                bool available = _slack(h, c, chain2Dead) >= need;
+                if (chain2Dead && c == 2) {
+                    h.payExact(c, need); // the dead chain's agent keeps asking; not measured
+                    // ... but it may absorb at most one more grant (a grant is <= CAP / 4 here)
+                    assertLe(
+                        h.core().heldOf(h.core().today(), 2),
+                        held2AtDeath + h.CAP() / 4,
+                        "(d) a dead chain absorbed more than one grant"
+                    );
+                    continue;
+                }
                 if (h.payExact(c, need)) {
                     servedAfterShort++;
                     starved[c] = 0;
@@ -151,12 +176,14 @@ contract PursestringsLivenessTest is Test {
         emit log_named_uint("short chains served on retry", servedAfterShort);
     }
 
-    function _slack(NetworkHandler h, uint8 c) internal view returns (uint256 slack) {
+    /// What could serve chain c: the pool, its own allowance, and the slack above the floor of
+    /// peers that aren't short (a dead peer's allowance can't be reclaimed, so it doesn't count).
+    function _slack(NetworkHandler h, uint8 c, bool chain2Dead) internal view returns (uint256 slack) {
         BudgetCoreHarness core = h.core();
         uint64 t = core.today();
         slack = h.wallets(c).unspentOf(t) + core.poolOf(t);
         for (uint8 j; j < 3; j++) {
-            if (j == c || h.lastNeed(j) > 0) continue;
+            if (j == c || h.lastNeed(j) > 0 || (chain2Dead && j == 2)) continue;
             uint256 u = h.wallets(j).unspentOf(t);
             if (u > h.FLOOR()) slack += u - h.FLOOR();
         }
