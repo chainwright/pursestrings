@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm} from "forge-std/Test.sol";
 import {NetworkHandler} from "./harness/NetworkHandler.sol";
 import {BudgetCoreHarness} from "./harness/BudgetCoreHarness.sol";
 import {SpendWallet} from "../src/SpendWallet.sol";
@@ -264,6 +264,48 @@ contract DirectedTest is Test {
         h.healAndSettle();
         assertTrue(core.frozen(), "coordinator never heard the STOP");
         _assertSafe();
+    }
+
+    /// The judge's R2-1 scenario: the press log is lost and the agent on the pressing chain stays
+    /// idle; only the agents on chains 0 and 2 act, on a healthy network. The coordinator's
+    /// heartbeat (a re-read, driven by Cron) reaches chain 1, which re-announces its press.
+    function test_stop_lostPressIdleAgentOnPressingChain() public {
+        _short(0, 10e6);
+        _short(2, 10e6);
+        h.settleFor(2);
+        h.ownerPressStop(1);
+        h.dropFirst(false, STOP_PRESSED, 1);
+        uint256 outAtPress = h.outflowOfDay(_today());
+        for (uint256 r; r < 40; r++) {
+            h.deliverAll();
+            vm.warp(block.timestamp + 300);
+            h.tick();
+            h.payExact(0, 5e5);
+            h.payExact(2, 5e5);
+        }
+        assertTrue(core.frozen(), "the coordinator never heard the STOP");
+        assertTrue(_w(0).frozen() && _w(2).frozen(), "STOP did not reach chains 0 and 2");
+        assertFalse(h.payExact(0, 5e5), "paid on chain 0 after STOP");
+        assertLe(h.outflowOfDay(_today()) - outAtPress, 20e6, "spent more than the cap after STOP");
+        _assertSafe();
+    }
+
+    /// Anyone can re-announce an unacknowledged press (e.g. the owner's UI), at most every 5 min,
+    /// and only until the coordinator acknowledges it.
+    function test_stop_anyoneCanReannounceAnUnacknowledgedPress() public {
+        h.ownerPressStop(1);
+        h.dropFirst(false, STOP_PRESSED, 1);
+        vm.recordLogs();
+        vm.prank(address(0x5714));
+        _w(1).reannounce(); // right after the press: rate-limited
+        assertEq(vm.getRecordedLogs().length, 0, "re-announced inside the rate limit");
+        vm.warp(block.timestamp + 301);
+        vm.prank(address(0x5714));
+        _w(1).reannounce();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1, "not re-announced");
+        assertEq(logs[0].topics[0], STOP_PRESSED);
+        assertEq(abi.decode(logs[0].data, (uint64)), _w(1).lastPressAt(), "same press mark");
     }
 
     /// An unstop names the epoch it lifts. Two unstop clicks; the second is delayed past a new

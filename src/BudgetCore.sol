@@ -39,6 +39,10 @@ abstract contract BudgetCore {
         uint64 verifyTimeout;
         uint64 pregrantWindow;
         uint64 wantTtl;
+        /// Every chain gets a heartbeat (a cheap re-read) at least this often, driven by Cron.
+        /// It carries a lost STOP press back even if nothing else is sent to that chain.
+        /// 0 = off.
+        uint64 heartbeat;
     }
 
     /// A wallet's Verified event, decoded.
@@ -118,6 +122,7 @@ abstract contract BudgetCore {
     uint64 public immutable verifyTimeout;
     uint64 public immutable pregrantWindow;
     uint64 public immutable wantTtl;
+    uint64 public immutable heartbeat;
 
     uint256 public cap;
     uint64 public capNonce;
@@ -157,6 +162,8 @@ abstract contract BudgetCore {
     uint256 internal _rCur;
     /// day => bit per chain already pre-granted for that day
     mapping(uint64 => uint256) internal _pregranted;
+    uint64 internal _nextBeat;
+    uint8 internal _beatChain;
 
     event DayOpened(uint64 day, uint256 cap);
     event GrantSent(uint256 id, uint8 chain, uint64 day, uint256 amount, uint64 epoch);
@@ -181,6 +188,7 @@ abstract contract BudgetCore {
         verifyTimeout = p.verifyTimeout;
         pregrantWindow = p.pregrantWindow;
         wantTtl = p.wantTtl;
+        heartbeat = p.heartbeat;
     }
 
     // ================================================================ inputs
@@ -346,6 +354,10 @@ abstract contract BudgetCore {
             }
         }
 
+        // 1b. heartbeat: one chain per beat, round robin, so each chain hears from the core at
+        //     least every `heartbeat` even when nothing else is due (Cron drives this).
+        if (heartbeat != 0 && nowTs >= _nextBeat && _canSend()) _beat(nowTs);
+
         // 2. returns old enough to confirm: ask the origin chain to re-read the fact
         uint256 n = _pendingKeys.length;
         if (n > 0) {
@@ -453,6 +465,13 @@ abstract contract BudgetCore {
                 _sendReclaim(j, t, w.amount);
             }
         }
+    }
+
+    function _beat(uint64 nowTs) internal virtual {
+        uint8 c = _beatChain;
+        _send(c, abi.encodeCall(IWalletInbox.verify, (K_EPOCH, epoch)));
+        _beatChain = uint8((uint256(c) + 1) % nChains);
+        _nextBeat = nowTs + heartbeat / nChains;
     }
 
     function _canSend() internal view returns (bool) {

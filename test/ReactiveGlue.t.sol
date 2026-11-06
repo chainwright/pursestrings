@@ -112,7 +112,8 @@ contract ReactiveGlueTest is Test {
             reclaimTimeout: 300,
             verifyTimeout: 120,
             pregrantWindow: 2 hours,
-            wantTtl: 600
+            wantTtl: 600,
+            heartbeat: TestnetConfig.HEARTBEAT
         });
         rc = new PursestringsReactive(p, w);
         assertEq(address(rc), rcAddr, "address prediction");
@@ -143,8 +144,8 @@ contract ReactiveGlueTest is Test {
     /// address) -> front forwards applyGrant -> the wallet now holds the allowance in tokens.
     function test_localLoop_shortBecomesAllowance() public {
         _react(_log(0, IWalletEvents.Short.selector, abi.encode(_today(), 3e6, uint64(block.timestamp))));
-        assertEq(sys.callbacks(), 1);
-        CallbackConfiguration_V_1_0 memory r = sys.request(0);
+        assertEq(_count(SpendWallet.applyGrant.selector), 1, "one grant");
+        CallbackConfiguration_V_1_0 memory r = sys.request(_first(SpendWallet.applyGrant.selector));
         assertEq(r.chainId, ids[0]);
         assertEq(r.recipient, address(fronts[0]));
         assertEq(r.gasLimit, TestnetConfig.CALLBACK_GAS_L2);
@@ -161,7 +162,7 @@ contract ReactiveGlueTest is Test {
         vm.warp(block.timestamp + 17 hours); // 23:00
         _react(_cron(TestnetConfig.CRON1000));
         assertTrue(rc.isOpen(_today() + 1), "tomorrow not opened by the tick");
-        assertEq(sys.callbacks(), 3, "one pre-grant per chain");
+        assertEq(_count(SpendWallet.applyGrant.selector), 3, "one pre-grant per chain");
         _pump();
         assertGt(wallets[2].unspentOf(_today() + 1), 0);
     }
@@ -325,6 +326,24 @@ contract ReactiveGlueTest is Test {
     }
 
     // ------------------------------------------------------------- helpers
+
+    function _innerSel(uint256 i) internal view returns (bytes4) {
+        (, bytes memory inner) = abi.decode(_tail(sys.request(i).payload), (address, bytes));
+        return bytes4(inner);
+    }
+
+    function _count(bytes4 sel) internal view returns (uint256 n) {
+        for (uint256 i; i < sys.callbacks(); i++) {
+            if (_innerSel(i) == sel) n++;
+        }
+    }
+
+    function _first(bytes4 sel) internal view returns (uint256) {
+        for (uint256 i; i < sys.callbacks(); i++) {
+            if (_innerSel(i) == sel) return i;
+        }
+        revert("none");
+    }
 
     function _today() internal view returns (uint64) {
         return uint64(block.timestamp / 1 days);

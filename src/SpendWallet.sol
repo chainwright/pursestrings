@@ -156,6 +156,13 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
         other.safeTransfer(to, amount);
     }
 
+    /// Anyone (the owner's UI, a watcher, any account) may re-announce a local STOP press the
+    /// coordinator hasn't acknowledged yet. Rate-limited, and a no-op once acknowledged, so it
+    /// can't be used to spam the coordinator.
+    function reannounce() external {
+        _echoStop();
+    }
+
     /// Anyone may retry returning stranded tokens to the vault.
     function flush() external {
         _flush();
@@ -170,12 +177,7 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
         require(msg.sender == agent, "agent");
         _sweep();
         if (frozen) {
-            // A local press the coordinator hasn't acknowledged yet is re-announced (rate-limited),
-            // so a lost StopPressed log can't leave the other chains running.
-            if (lastPressAt > pressAckedAt && block.timestamp >= uint256(stopEchoAt) + SHORT_REARM) {
-                stopEchoAt = uint64(block.timestamp);
-                emit StopPressed(lastPressAt);
-            }
+            _echoStop();
             return _refuse(callId, R_FROZEN);
         }
         if (!payeeAllowed[payee]) return _refuse(callId, R_PAYEE);
@@ -280,6 +282,7 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
         if (e > epoch) _roll(e);
         frozen = frozen_ || lastPressAt > pressAckedAt;
         emit EpochAck(e, frozen, uint64(block.timestamp));
+        _echoStop();
         _sweep();
         _flush();
     }
@@ -300,6 +303,7 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
         } else if (kind == K_EPOCH) {
             emit Verified(kind, key, epoch >= key, 0, 0, 0, epochSince, nowTs);
         }
+        _echoStop(); // the coordinator's periodic heartbeat is a verify: a lost press rides on it
     }
 
     // ------------------------------------------------------------------ views
@@ -372,6 +376,17 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
             if (_openDays[i] == d) return;
         }
         _openDays.push(d);
+    }
+
+    /// A local press the coordinator hasn't acknowledged is re-announced, at most every
+    /// SHORT_REARM seconds: from a refused payment, from any coordinator heartbeat or epoch
+    /// message, or from reannounce(). A lost StopPressed log therefore can't leave the other
+    /// chains running, even if the agent on this chain is idle.
+    function _echoStop() internal virtual {
+        if (lastPressAt > pressAckedAt && block.timestamp >= uint256(stopEchoAt) + SHORT_REARM) {
+            stopEchoAt = uint64(block.timestamp);
+            emit StopPressed(lastPressAt);
+        }
     }
 
     /// Accounting only: the tokens are owed to the vault from now on (see _flush).

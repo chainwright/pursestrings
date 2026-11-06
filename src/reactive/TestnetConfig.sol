@@ -34,6 +34,11 @@ library TestnetConfig {
     ///    Wait: 30 min.
     /// The cost is latency on the donor path only (reclaims, voided grants, epoch rolls); the
     /// reserve top-up path never waits.
+    /// Each chain hears from the coordinator at least this often (a re-read, ~1 callback per chain
+    /// per hour), so a lost STOP press is carried back within about an hour plus a Cron tick even
+    /// if nothing else happens on that chain. Cron1000 paces it: one chain per tick at most.
+    uint64 internal constant HEARTBEAT = 1 hours;
+
     uint64 internal constant WAIT_SEPOLIA = 16 minutes;
     uint64 internal constant WAIT_OP_STACK = 30 minutes;
 

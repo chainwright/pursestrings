@@ -87,6 +87,7 @@ contract NetworkHandler is Test {
     // ---- ghost: owner intent for STOP (sequence numbers of owner actions)
     uint256 internal ownerSeq;
     uint256 public gLastPressSeq;
+    uint8 public gLastPressChain;
     uint256 public gLastUnstopSeq;
 
     // ---- ghost: STOP in effect per chain (invariant b)
@@ -154,7 +155,8 @@ contract NetworkHandler is Test {
             reclaimTimeout: 300,
             verifyTimeout: 120,
             pregrantWindow: 2 hours,
-            wantTtl: 600
+            wantTtl: 600,
+            heartbeat: 1800
         });
         core = mutant == 0 ? new BudgetCoreHarness(p, address(this)) : new MutantCore(p, address(this), mutant);
         console = new OwnerConsole(OWNER);
@@ -352,7 +354,9 @@ contract NetworkHandler is Test {
 
     /// The network heals: held messages are released, partitions end, competing branches are
     /// abandoned, and nothing is dropped any more. For HEAL_ROUNDS rounds everything queued is
-    /// delivered in order, 5 minutes pass, Cron ticks, and every agent retries a small payment.
+    /// delivered in order, 5 minutes pass, Cron ticks, and every agent retries a small payment,
+    /// except the agent on the chain where the owner last pressed STOP, which stays idle (the
+    /// runaway agent is usually elsewhere; a lost press must not depend on that agent).
     /// Then the owner-level STOP property is checked:
     ///   - every wallet is at the coordinator's epoch (no payment can use an older epoch);
     ///   - if the owner's last action was a STOP (pressed after the last unstop was issued), the
@@ -372,6 +376,7 @@ contract NetworkHandler is Test {
             vm.warp(block.timestamp + HEAL_STEP);
             tick();
             for (uint8 c; c < N; c++) {
+                if (ownerStopped() && c == gLastPressChain) continue;
                 payExact(c, CAP / 40);
             }
         }
@@ -529,6 +534,7 @@ contract NetworkHandler is Test {
             gPressMark[c] = mark;
             gFrozen[c] = true;
             gLastPressSeq = ++ownerSeq;
+            gLastPressChain = c;
         }
         stops++;
     }

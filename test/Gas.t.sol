@@ -270,7 +270,8 @@ contract GasTest is Test {
             reclaimTimeout: 300,
             verifyTimeout: 120,
             pregrantWindow: 2 hours,
-            wantTtl: 600
+            wantTtl: 600,
+            heartbeat: TestnetConfig.HEARTBEAT
         });
         rc = new StuffedReactive(p, w);
         rc.stuff(nG, nP, nR);
