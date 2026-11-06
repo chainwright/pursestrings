@@ -83,12 +83,14 @@ contract LivenessStats is Test {
         PursestringsLivenessTest t = new PursestringsLivenessTest();
         uint256[25] memory hist;
         uint256 worst;
-        for (uint256 seed; seed < 120; seed++) {
+        uint256 seeds = vm.envOr("LIVENESS_SEEDS", uint256(120)); // e.g. LIVENESS_SEEDS=1600
+        for (uint256 seed; seed < seeds; seed++) {
             uint256 m = t.livenessRun(seed, true);
             hist[m > 24 ? 24 : m]++;
             if (m > worst) worst = m;
         }
-        console2.log("production timing, 120 seeds: worst refused-with-budget streak (5-min rounds)", worst);
+        console2.log("production timing, seeds:", seeds);
+        console2.log("worst refused-with-budget streak (5-min rounds)", worst);
         for (uint256 i; i < 25; i++) {
             if (hist[i] > 0) console2.log("  seeds whose worst streak was", i, hist[i]);
         }

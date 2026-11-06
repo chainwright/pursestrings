@@ -169,9 +169,12 @@ contract ReactiveGlueTest is Test {
 
     /// A Cron tick alone (no origin event) drives the loop: late in the day it pre-grants tomorrow.
     function test_cronTickDrivesPregrants() public {
-        vm.warp(block.timestamp + 17 hours); // 23:00
+        vm.warp(block.timestamp + 17 hours); // 23:00, after a long idle: heartbeats are due too
         _react(_cron(TestnetConfig.CRON1000));
         assertTrue(rc.isOpen(_today() + 1), "tomorrow not opened by the tick");
+        assertGe(_count(SpendWallet.applyGrant.selector), 1, "pre-grants start on the first tick");
+        vm.warp(block.timestamp + 17 minutes);
+        _react(_cron(TestnetConfig.CRON1000)); // the next tick finishes them
         assertEq(_count(SpendWallet.applyGrant.selector), 3, "one pre-grant per chain");
         _pump();
         assertGt(wallets[2].unspentOf(_today() + 1), 0);

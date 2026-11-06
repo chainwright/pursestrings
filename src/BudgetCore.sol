@@ -172,8 +172,10 @@ abstract contract BudgetCore {
     uint256 internal _rCur;
     /// day => bit per chain already pre-granted for that day
     mapping(uint64 => uint256) internal _pregranted;
-    uint64 internal _nextBeat;
-    uint8 internal _beatChain;
+    /// chain => when its next heartbeat is due
+    mapping(uint8 => uint64) internal _beatDue;
+    /// chain => its unanswered grant (at most one), 0 if none
+    mapping(uint8 => uint256) internal _inflightId;
 
     event DayOpened(uint64 day, uint256 cap);
     event GrantSent(uint256 id, uint8 chain, uint64 day, uint256 amount, uint64 epoch);
@@ -195,6 +197,9 @@ abstract contract BudgetCore {
         }
         pregrantWindow = p.pregrantWindow;
         heartbeat = p.heartbeat;
+        for (uint8 c; c < p.nChains; c++) {
+            _beatDue[c] = uint64(block.timestamp) + uint64(c) * p.heartbeat / p.nChains; // staggered
+        }
     }
 
     // ================================================================ inputs
@@ -202,6 +207,7 @@ abstract contract BudgetCore {
     // react() as well as on Cron ticks.
 
     function _onShort(uint8 c, uint64 day, uint256 shortBy) internal {
+        _alive(c);
         if (!frozen && day == _today()) {
             Want storage w = want[c];
             if (!_wanting(c, day) || w.amount < shortBy) w.amount = uint128(shortBy);
@@ -212,6 +218,7 @@ abstract contract BudgetCore {
     }
 
     function _onLowWater(uint8 c, uint64 day) internal {
+        _alive(c);
         if (!frozen && day == _today()) {
             if (!_wanting(c, day)) want[c] = Want(day, uint64(block.timestamp), uint128(cap / 10));
         }
@@ -219,6 +226,7 @@ abstract contract BudgetCore {
     }
 
     function _onGrantApplied(uint8 c, uint256 grantId) internal virtual {
+        _alive(c);
         Grant storage g = grants[grantId];
         if (g.st != 0 && g.chain == c) {
             _answered(g);
@@ -228,6 +236,7 @@ abstract contract BudgetCore {
     }
 
     function _onGrantNotApplied(uint8 c, uint256 grantId, uint64 ts) internal {
+        _alive(c);
         Grant storage g = grants[grantId];
         if (g.st != 0 && g.chain == c) {
             _answered(g);
@@ -237,6 +246,7 @@ abstract contract BudgetCore {
     }
 
     function _onCancelAck(uint8 c, uint256 grantId, bool applied, uint64 ts) internal {
+        _alive(c);
         Grant storage g = grants[grantId];
         if (g.st != 0 && g.chain == c) {
             _answered(g);
@@ -250,6 +260,7 @@ abstract contract BudgetCore {
     }
 
     function _onReclaimed(uint8 c, uint256 reqId, uint256 amount, uint64 ts) internal {
+        _alive(c);
         Reclaim storage r = reclaims[reqId];
         if (r.sentAt != 0 && r.chain == c) {
             // The donor's slot stays taken until this return is credited or dropped, so the
@@ -261,11 +272,13 @@ abstract contract BudgetCore {
     }
 
     function _onRolled(uint8 c, uint64 e, uint64 day, uint256 r0, uint256 r1, uint64 ts) internal {
+        _alive(c);
         _admit(K_ROLL, c, e, day, r0, r1, ts);
         _poke();
     }
 
     function _onEpochAck(uint8 c, uint64 e, uint64 ts) internal {
+        _alive(c);
         if (e > epochAcked[c]) _admit(K_EPOCH, c, e, 0, 0, 0, ts);
         _poke();
     }
@@ -274,6 +287,7 @@ abstract contract BudgetCore {
     /// re-freeze after an unstop. Every new press opens a new frozen epoch, even when already
     /// frozen: an unstop issued before this press names an older epoch and can never lift it.
     function _onStopPressed(uint8 c, uint64 mark) internal {
+        _alive(c);
         if (mark > pressSeenAt[c]) {
             pressSeenAt[c] = mark;
             frozen = true;
@@ -287,6 +301,7 @@ abstract contract BudgetCore {
     }
 
     function _onVerified(uint8 c, Echo memory v) internal {
+        _alive(c);
         bytes32 k = _key(v.kind, c, v.key);
         Pending storage p = pending[k];
         if (p.kind != 0) {
@@ -372,9 +387,18 @@ abstract contract BudgetCore {
         // call stays the lightest. The rest waits for the next event or Cron tick.
         if (_sendsLeft <= MAX_SENDS) return;
 
-        // 1b. heartbeat: one chain per beat, round robin, so each chain hears from the core at
-        //     least every `heartbeat` even when nothing else is due (Cron drives this).
-        if (heartbeat != 0 && nowTs >= _nextBeat && _canSendBackground()) _beat(nowTs);
+        // 1b. heartbeat: every chain whose beat is due gets one, so each chain hears from the core
+        //     at least every `heartbeat` plus one Cron period, even when nothing else is due.
+        //     At most 2 per call (steady demand is 3 per `heartbeat`, one call per Cron period).
+        if (heartbeat != 0) {
+            uint256 beats;
+            for (uint8 c; c < nChains && beats < 2; c++) {
+                if (nowTs < _beatDue[c]) continue;
+                if (!_canSendBackground()) break;
+                _beat(c, nowTs);
+                beats++;
+            }
+        }
 
         // 2. returns old enough to confirm: ask the origin chain to re-read the fact
         //    (at most 2 per call, so cancels always get a share of the budget)
@@ -493,11 +517,20 @@ abstract contract BudgetCore {
         }
     }
 
-    function _beat(uint64 nowTs) internal virtual {
-        uint8 c = _beatChain;
+    function _beat(uint8 c, uint64 nowTs) internal virtual {
         _send(c, abi.encodeCall(IWalletInbox.verify, (K_EPOCH, epoch)));
-        _beatChain = uint8((uint256(c) + 1) % nChains);
-        _nextBeat = nowTs + heartbeat / nChains;
+        _beatDue[c] = nowTs + heartbeat;
+    }
+
+    /// Any event from chain c shows it is alive: the backoff of its retries starts over, so a
+    /// chain that was unreachable for hours is retried at once, not after up to 32 timeouts.
+    function _alive(uint8 c) internal virtual {
+        epochTries[c] = 0;
+        uint256 id = _inflightId[c];
+        if (id != 0) {
+            Grant storage g = grants[id];
+            if (!g.answered && g.tries != 0) g.tries = 0;
+        }
     }
 
     /// Heartbeats, re-reads and cancels leave one send per call for serving (grants and
@@ -548,6 +581,7 @@ abstract contract BudgetCore {
         uint256 id = nextId++;
         grants[id] = Grant(c, G_SENT, 0, d, epoch, uint64(block.timestamp), uint128(amount), false);
         inflight[c]++;
+        _inflightId[c] = id;
         _liveGrants.push(id);
         emit GrantSent(id, c, d, amount, epoch);
         _send(c, abi.encodeCall(IWalletInbox.applyGrant, (id, d, amount, epoch)));

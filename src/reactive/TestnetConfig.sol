@@ -36,10 +36,11 @@ library TestnetConfig {
     ///    Wait: 30 min.
     /// The cost is latency on the donor path only (reclaims, voided grants, epoch rolls); the
     /// reserve top-up path never waits.
-    /// Each chain hears from the coordinator at least this often (a re-read, ~1 callback per chain
-    /// per hour), so a lost STOP press is carried back within about an hour plus a Cron tick even
-    /// if nothing else happens on that chain. Cron1000 paces it: one chain per tick at most.
-    uint64 internal constant HEARTBEAT = 1 hours;
+    /// Each chain gets a heartbeat (a re-read) once this much time has passed since its last one,
+    /// on the next react: with Cron1000 every ~17 min that is within 40 + 17 = 57 min, so a lost
+    /// STOP press is carried back within about an hour even if nothing else happens on that chain
+    /// (test/ProductionTiming.t.sol measures it). About 3 callbacks per 51 min in an idle system.
+    uint64 internal constant HEARTBEAT = 40 minutes;
 
     uint64 internal constant WAIT_SEPOLIA = 16 minutes;
     uint64 internal constant WAIT_OP_STACK = 30 minutes;
@@ -63,5 +64,5 @@ library TestnetConfig {
     /// front with the test token + an allowance for USDC's heavier transfers), rounded up.
     /// Derivation and the check that it still holds: test/Gas.t.sol.
     uint64 internal constant CALLBACK_GAS_SEPOLIA = 700_000;
-    uint64 internal constant CALLBACK_GAS_L2 = 600_000;
+    uint64 internal constant CALLBACK_GAS_L2 = 700_000;
 }

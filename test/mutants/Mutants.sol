@@ -113,6 +113,7 @@ contract MutantCore is BudgetCoreHarness {
         uint256 id = nextId++;
         grants[id] = Grant(c, G_SENT, 0, d, epoch, uint64(block.timestamp), uint128(amount), false);
         inflight[c]++;
+        _inflightId[c] = id;
         _liveGrants.push(id);
         emit GrantSent(id, c, d, amount, epoch);
         _send(c, abi.encodeCall(IWalletInbox.applyGrant, (id, d, amount, epoch)));

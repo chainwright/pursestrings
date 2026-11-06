@@ -54,6 +54,18 @@ MUTANTS = [
     ("Z4", "core: a reclaim can time out while its return is pending",
      "src/BudgetCore.sol",
      "                        && pending[_key(K_RECLAIM, r.chain, _liveReclaims[i])].kind == 0\n", ""),
+    ("W2", "core: heartbeat 3x slower than configured",
+     "src/BudgetCore.sol", "        _beatDue[c] = nowTs + heartbeat;", "        _beatDue[c] = nowTs + 3 * heartbeat;"),
+    ("W9", "config: production reclaim timeout = wait / 2",
+     "src/reactive/TestnetConfig.sol",
+     "        p.reclaimTimeout = uint32(wait) + 2 * p.verifyTimeout;",
+     "        p.reclaimTimeout = uint32(wait) / 2;"),
+    ("W10", "config: production want TTL 10 min",
+     "src/reactive/TestnetConfig.sol", "        p.wantTtl = p.reclaimTimeout;", "        p.wantTtl = 10 minutes;"),
+    ("W12", "config: production grant timeout 10 h",
+     "src/reactive/TestnetConfig.sol", "        p.grantTimeout = 10 minutes;", "        p.grantTimeout = 10 hours;"),
+    ("W14", "core: no backoff reset when a chain shows it is alive",
+     "src/BudgetCore.sol", "        epochTries[c] = 0;\n        uint256 id = _inflightId[c];", "        return;\n        uint256 id = _inflightId[c];"),
 ]
 
 
