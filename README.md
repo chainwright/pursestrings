@@ -9,7 +9,7 @@ the mutants, what is still not covered, and what the spike changed in the design
 
 ```
 forge build
-forge test             # invariants, directed scenarios, liveness, production timing, gas, Reactive glue (~30 s)
+forge test             # invariants, directed scenarios, liveness, production timing, gas, Reactive glue (~30-45 s)
 script/mutants.sh      # full suite x 2 seeds per mutant: each must fail, the real contracts must pass (30-60 min, machine-dependent)
 ```
 
@@ -25,6 +25,10 @@ What the tests do and don't show:
   Unichain Sepolia. The 30 min is a typical time to L2 finality, not a guaranteed bound: a stalled
   batcher can leave L2 blocks unsafe longer, so L2 safety assumes a healthy sequencer and batcher
   until Reactive confirms it delivers only finalized logs.
+- STOP latency after a lost STOP log depends on the Cron period (1000 Lasna blocks): one
+  heartbeat cycle plus delivery, 51-59 min in our model for a Cron of 17-19.5 min (56 at the
+  default 18.5 min, from DOCS_BRIEF's single 1.11 s block-time sample). Lasna's real Cron period
+  is unmeasured.
 - Nothing has run on Reactive yet: all latency, gas and fee figures are Foundry measurements or
   estimates.
 
@@ -35,9 +39,11 @@ What the tests do and don't show:
   It also keeps a balance of its own (send lREACT to it); the system contract collects fees from
   that balance with `pay()`, and anyone can clear a debt with `coverDebt()`. A contract in debt
   gets no `react()` calls, so STOP would stop propagating: keep it funded.
-  Cost drivers: Cron1000 (~78 ticks a day), the heartbeat (a re-read to each chain every 40-57 min, plus the
-  `react()` for its answer), and one `react()` per wallet event. Estimated roughly 1-5 lREACT a day
-  from the documented fee formula and our Foundry gas figures; **unmeasured**.
+  Cost drivers: Cron1000 (~75-85 ticks a day), the heartbeat (a re-read to each chain every
+  ~51-56 min when idle, plus the `react()` for its answer), and one `react()` per wallet event.
+  A few lREACT a day (Cron alone up to ~4.6 if every tick were the heaviest measured, heartbeat
+  answers on top), from the documented fee formula and our Foundry gas figures; **unmeasured**.
+  A front that stays dead while its agent keeps asking costs about one cancel per 40 min.
 - **Callback front on each destination chain:** fund with
   `cast send $CALLBACK_PROXY "depositTo(address)" $FRONT --value <ETH>` and/or send ETH to the
   front; the proxy collects with `pay()`, `coverDebt()` works the same way, and the owner can
