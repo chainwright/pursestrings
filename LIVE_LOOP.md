@@ -1,6 +1,6 @@
 # Live loop run book (gate part 2): Lasna ↔ Base Sepolia ↔ Unichain Sepolia
 
-**Status: prepared, not run.** No network transaction has been sent. Wait for reactivedevs' answers first, on:
+**Status: steps A–E passed live on 07.11.2026 UTC (see `live/LIVE_RUN_2026-11-07.md`).** Earlier status: prepared, not run. Wait for reactivedevs' answers first, on:
 - delivery depth (head, safe or finalized);
 - duplicate delivery;
 - retries of failed callbacks;
@@ -112,6 +112,7 @@ forge script script/Check.s.sol      # must print "base wiring ok", "unichain wi
 ```
 - CAP is $4 a day for the smoke test (judge D-4). A surprise then moves at most $4 of faucet USDC. Raise it later with `setCap`; a raise applies at once.
 - `--gas-estimate-multiplier 200` gives headroom on Lasna. Gas that isn't used is not charged.
+- **Learned live (07.11): the public Lasna RPC refuses any tx whose gasLimit × maxFee exceeds 1 lREACT** ("tx fee (1.84 ether) exceeds the configured cap"). With the ×2 multiplier the coordinator's CREATE was refused while both L2 sides landed. Nothing was spent on Lasna and the nonce stayed 0, so the same initcode (from `broadcast/multi/Deploy.s.sol-latest/run.json`) was sent with `cast send --create --legacy --gas-price 110gwei --gas-limit 7000000 --nonce 0` and landed at the predicted address. Next time: deploy the L2 sides with forge and the coordinator this way, or use a multiplier ≤ 130 with an explicit legacy price.
 - Keep `broadcast/`: it holds every tx hash for the submission.
 
 **Step D, only after Check passes: small funding, then watch idle Cron:**
