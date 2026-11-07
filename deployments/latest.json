@@ -1,0 +1,22 @@
+{
+  "base": {
+    "chainId": 84532,
+    "front": "0xEDe676F068c225315a3973BCdefB40364C26567d",
+    "proxy": "0x476F44b11F5C942c58f4c8E3d0300E5710743585",
+    "token": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    "vault": "0xb80D1f2176d721c77A08EA1450B8266293d675de",
+    "wallet": "0x8e0c2ad73ef5e7Eb7630126195A37D74C3BD939e"
+  },
+  "console": "0x9C1E06984DC361226EB9db2f14A089f93b1Fe12d",
+  "coordinator": "0x7B8111CDF7001721469c584Fa9613369F0E7aC1E",
+  "dryRun": false,
+  "lasnaChainId": 5318007,
+  "unichain": {
+    "chainId": 1301,
+    "front": "0x9C1E06984DC361226EB9db2f14A089f93b1Fe12d",
+    "proxy": "0x775c9B990ADe401060B78D0e98684eEf8d2466C1",
+    "token": "0x31d0220469e10c4E71834a79b1f276d740d3768F",
+    "vault": "0xEDe676F068c225315a3973BCdefB40364C26567d",
+    "wallet": "0xb80D1f2176d721c77A08EA1450B8266293d675de"
+  }
+}

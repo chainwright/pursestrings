@@ -43,6 +43,10 @@ import time
 
 CAST = os.environ.get("CAST", os.path.expanduser("~/.foundry/bin/cast"))
 SYSTEM = "0x8888888888888888888888888888888888888888"
+# getCallbacks is served by the Lasna service contract at 0x…ffffff, not by the system
+# contract 0x8888…: there it returns [] (checked live 07.11 on reactive tx 0xe72a…76ff).
+# The anvil dry run keeps its stand-in index at 0x8888…, so dryrun.sh overrides this.
+CALLBACK_INDEX = os.environ.get("LASNA_CALLBACK_INDEX", "0x0000000000000000000000000000000000ffffff")
 CHAINS = {"base": ("BASE_SEPOLIA_RPC_URL", 84532, 0), "unichain": ("UNICHAIN_SEPOLIA_RPC_URL", 1301, 1)}
 RPC_BY_CHAIN_ID = {84532: "BASE_SEPOLIA_RPC_URL", 1301: "UNICHAIN_SEPOLIA_RPC_URL", 5318007: "LASNA_RPC_URL"}
 EVENTS = {
@@ -102,7 +106,7 @@ def words(data):
 
 def callbacks(reactive_tx):
     sig = "getCallbacks(uint256)((uint256,address,uint256,uint256,uint256,bytes)[])"
-    out = cast("call", SYSTEM, sig, str(h(reactive_tx)), "--json", env="LASNA_RPC_URL")
+    out = cast("call", CALLBACK_INDEX, sig, str(h(reactive_tx)), "--json", env="LASNA_RPC_URL")
     try:
         rows = json.loads(out)[0]
     except Exception:
@@ -158,6 +162,16 @@ def answers_in(rcpt, wanted):
     return found
 
 
+def lasna_block_before(ts):
+    """A Lasna block at or before time ts. The public Lasna RPC prunes old blocks, so
+    `cast find-block` (a binary search from block 1) fails there. Step back from the
+    latest block by elapsed time at the measured 1.064 s/block, with a 5% + 30-block margin."""
+    latest = int(cast("block-number", env="LASNA_RPC_URL"))
+    latest_ts = int(cast("block", "latest", "--field", "timestamp", env="LASNA_RPC_URL"), 0)
+    back = int(max(0, latest_ts - ts) / 1.064 * 1.05) + 30
+    return max(0, latest - back)
+
+
 def trace(a):
     dep = json.load(open(os.environ.get("DEPLOYMENTS_FILE", "deployments/latest.json")))
     rc = dep["coordinator"]
@@ -165,7 +179,7 @@ def trace(a):
     env, chain_id, idx = CHAINS[a.chain]
     origin = receipt(a.tx, env)
     origin_day = origin["ts"] // 86400
-    lasna_from = max(0, h(cast("find-block", str(origin["ts"]), env="LASNA_RPC_URL")) - 2)
+    lasna_from = lasna_block_before(origin["ts"])
     deadline = time.time() + a.timeout_min * 60
     t_applied = offline("keccak", "GrantApplied(uint256,uint64,uint256,uint64)").lower()
     t_not_applied = offline("keccak", "GrantNotApplied(uint256,uint8,uint64)").lower()

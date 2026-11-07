@@ -1,0 +1,164 @@
+START Fri Nov  6 18:00:01 CST 2026
+0
+No files changed, compilation skipped
+Warning: Multi chain deployment is still under development. Use with caution.
+Script ran successfully.
+Gas used: 10739135
+
+== Logs ==
+  deployer 0xeE7F470E1C47431b033F8638E932a9ebfFB3cbfc
+  coordinator predicted on Lasna at nonce 0 0x7B8111CDF7001721469c584Fa9613369F0E7aC1E
+  coordinator 0x7B8111CDF7001721469c584Fa9613369F0E7aC1E
+  addresses written to deployments/latest.json
+
+## Setting up 3 EVMs.
+
+==========================
+
+Chain 84532
+
+Estimated gas price: 0.011 gwei
+
+Estimated total gas used for script: 7458336
+
+Estimated amount required: 0.000082041696 ETH
+
+==========================
+
+==========================
+
+Chain 1301
+
+Estimated gas price: 0.001000001 gwei
+
+Estimated total gas used for script: 6965488
+
+Estimated amount required: 0.000006965494965488 ETH
+
+==========================
+
+==========================
+
+Chain 5318007
+
+Estimated gas price: 175.001135751 gwei
+
+Estimated total gas used for script: 9186592
+
+Estimated amount required: 1.607664033681050592 ETH
+
+==========================
+
+Transactions saved to: /Users/mini/agents/sora/hackathons/reactive_2026/pursestrings/broadcast/multi/Deploy.s.sol-latest/run.json
+
+Sensitive details saved to: /Users/mini/agents/sora/hackathons/reactive_2026/pursestrings/cache/multi/Deploy.s.sol-latest/run.json
+
+Error: Failed to send transaction after 4 attempts Err(server returned an error response: error code -32000: tx fee (1.84 ether) exceeds the configured cap (1.00 ether), data: {"code":"ErrFailsafeRetryExceeded","message":"gave up retrying on network-level after 4.700466486s","details":{"durationMs":4700},"cause":{"code":"ErrUpstreamsExhausted","message":"all upstream attempts failed (4 upstream server errors)","details":{"projectId":"lasna-omni","networkId":"evm:5318007","method":"eth_sendRawTransaction","attempts":48,"retries":3,"hedges":8,"upstreams":4,"durationMs":4700},"cause":[{"code":"ErrUpstreamRequest","message":"failed to make request to upstream","details":{"networkId":"evm:5318007","method":"eth_sendRawTransaction","attempts":46,"retries":3,"hedges":8,"upstreamId":"lasna-omni-node-0-archive","durationMs":14},"cause":{"code":"ErrEndpointServerSideException","message":"an internal error on remote endpoint","cause":{"code":"ErrJsonRpcExceptionInternal","message":"tx fee (1.84 ether) exceeds the configured cap (1.00 ether)","details":{"statusCode":200,"headers":{"content-type":"application/json","date":"Sat, 07 Nov 2026 00:02:03 GMT","content-length":"126"},"originalCode":-32000,"normalizedCode":-32000}}}},{"code":"ErrUpstreamRequest","message":"failed to make request to upstream","details":{"attempts":47,"retries":3,"hedges":8,"upstreamId":"lasna-omni-node-0-full","durationMs":13,"networkId":"evm:5318007","method":"eth_sendRawTransaction"},"cause":{"code":"ErrEndpointServerSideException","message":"an internal error on remote endpoint","cause":{"code":"ErrJsonRpcExceptionInternal","message":"tx fee (1.84 ether) exceeds the configured cap (1.00 ether)","details":{"statusCode":200,"headers":{"content-type":"application/json","date":"Sat, 07 Nov 2026 00:02:03 GMT","content-length":"126"},"originalCode":-32000,"normalizedCode":-32000}}}},{"code":"ErrUpstreamRequest","message":"failed to make request to upstream","details":{"durationMs":5,"networkId":"evm:5318007","method":"eth_sendRawTransaction","attempts":45,"retries":3,"hedges":8,"upstreamId":"lasna-omni-node-1-archive"},"cause":{"code":"ErrEndpointServerSideException","message":"an internal error on remote endpoint","cause":{"code":"ErrJsonRpcExceptionInternal","message":"tx fee (1.84 ether) exceeds the configured cap (1.00 ether)","details":{"statusCode":200,"headers":{"content-type":"application/json","date":"Sat, 07 Nov 2026 00:02:03 GMT","content-length":"126"},"originalCode":-32000,"normalizedCode":-32000}}}},{"code":"ErrUpstreamRequest","message":"failed to make request to upstream","details":{"hedges":8,"upstreamId":"lasna-omni-node-1-full","durationMs":5,"networkId":"evm:5318007","method":"eth_sendRawTransaction","attempts":48,"retries":3},"cause":{"code":"ErrEndpointServerSideException","message":"an internal error on remote endpoint","cause":{"code":"ErrJsonRpcExceptionInternal","message":"tx fee (1.84 ether) exceeds the configured cap (1.00 ether)","details":{"statusCode":200,"headers":{"date":"Sat, 07 Nov 2026 00:02:03 GMT","content-length":"126","content-type":"application/json"},"originalCode":-32000,"normalizedCode":-32000}}}}]}})
+
+Context:
+- server returned an error response: error code -32000: tx fee (1.84 ether) exceeds the configured cap (1.00 ether), data: {"code":"ErrFailsafeRetryExceeded","message":"gave up retrying on network-level after 4.720091712s","details":{"durationMs":4720},"cause":{"code":"ErrUpstreamsExhausted","message":"all upstream attempts failed (4 upstream server errors)","details":{"hedges":8,"upstreams":4,"durationMs":4720,"projectId":"lasna-omni","networkId":"evm:5318007","method":"eth_sendRawTransaction","attempts":48,"retries":3},"cause":[{"code":"ErrUpstreamRequest","message":"failed to make request to upstream","details":{"networkId":"evm:5318007","method":"eth_sendRawTransaction","attempts":47,"retries":3,"hedges":8,"upstreamId":"lasna-omni-node-0-archive","durationMs":13},"cause":{"code":"ErrEndpointServerSideException","message":"an internal error on remote endpoint","cause":{"code":"ErrJsonRpcExceptionInternal","message":"tx fee (1.84 ether) exceeds the configured cap (1.00 ether)","details":{"statusCode":200,"headers":{"content-type":"application/json","date":"Sat, 07 Nov 2026 00:03:21 GMT","content-length":"126"},"originalCode":-32000,"normalizedCode":-32000}}}},{"code":"ErrUpstreamRequest","message":"failed to make request to upstream","details":{"networkId":"evm:5318007","method":"eth_sendRawTransaction","attempts":48,"retries":3,"hedges":8,"upstreamId":"lasna-omni-node-0-full","durationMs":14},"cause":{"code":"ErrEndpointServerSideException","message":"an internal error on remote endpoint","cause":{"code":"ErrJsonRpcExceptionInternal","message":"tx fee (1.84 ether) exceeds the configured cap (1.00 ether)","details":{"statusCode":200,"headers":{"content-type":"application/json","date":"Sat, 07 Nov 2026 00:03:21 GMT","content-length":"126"},"originalCode":-32000,"normalizedCode":-32000}}}},{"code":"ErrUpstreamRequest","message":"failed to make request to upstream","details":{"hedges":8,"upstreamId":"lasna-omni-node-1-archive","durationMs":5,"networkId":"evm:5318007","method":"eth_sendRawTransaction","attempts":46,"retries":3},"cause":{"code":"ErrEndpointServerSideException","message":"an internal error on remote endpoint","cause":{"code":"ErrJsonRpcExceptionInternal","message":"tx fee (1.84 ether) exceeds the configured cap (1.00 ether)","details":{"statusCode":200,"headers":{"date":"Sat, 07 Nov 2026 00:03:21 GMT","content-length":"126","content-type":"application/json"},"originalCode":-32000,"normalizedCode":-32000}}}},{"code":"ErrUpstreamRequest","message":"failed to make request to upstream","details":{"hedges":8,"upstreamId":"lasna-omni-node-1-full","durationMs":5,"networkId":"evm:5318007","method":"eth_sendRawTransaction","attempts":45,"retries":3},"cause":{"code":"ErrEndpointServerSideException","message":"an internal error on remote endpoint","cause":{"code":"ErrJsonRpcExceptionInternal","message":"tx fee (1.84 ether) exceeds the configured cap (1.00 ether)","details":{"statusCode":200,"headers":{"content-type":"application/json","date":"Sat, 07 Nov 2026 00:03:21 GMT","content-length":"126"},"originalCode":-32000,"normalizedCode":-32000}}}}]}}
+DEPLOY EXIT 1
+No files changed, compilation skipped
+Traces:
+  [2899060] → new Check@0x9f7cF1d1F558E57ef88a59ac3D47214eF25B6A06
+    └─ ← [Return] 13692 bytes of code
+
+  [107808] Check::run()
+    ├─ [0] VM::envOr("DEPLOYMENTS_FILE", "deployments/latest.json") [staticcall]
+    │   └─ ← [Return] <env var value>
+    ├─ [0] VM::readFile("deployments/latest.json") [staticcall]
+    │   └─ ← [Return] <file>
+    ├─ [0] VM::parseJsonAddress("<stringified JSON>", ".coordinator") [staticcall]
+    │   └─ ← [Return] 0x7B8111CDF7001721469c584Fa9613369F0E7aC1E
+    ├─ [0] VM::envString("BASE_SEPOLIA_RPC_URL") [staticcall]
+    │   └─ ← [Return] <env var value>
+    ├─ [0] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 0
+    ├─ [0] VM::parseJsonAddress("<stringified JSON>", ".base.front") [staticcall]
+    │   └─ ← [Return] 0xEDe676F068c225315a3973BCdefB40364C26567d
+    ├─ [0] VM::parseJsonAddress("<stringified JSON>", ".base.wallet") [staticcall]
+    │   └─ ← [Return] 0x8e0c2ad73ef5e7Eb7630126195A37D74C3BD939e
+    ├─ [0] VM::parseJsonAddress("<stringified JSON>", ".base.vault") [staticcall]
+    │   └─ ← [Return] 0xb80D1f2176d721c77A08EA1450B8266293d675de
+    ├─ [190] 0xEDe676F068c225315a3973BCdefB40364C26567d::rc() [staticcall]
+    │   └─ ← [Return] 0x7B8111CDF7001721469c584Fa9613369F0E7aC1E
+    ├─ [310] 0xEDe676F068c225315a3973BCdefB40364C26567d::proxy() [staticcall]
+    │   └─ ← [Return] 0x476F44b11F5C942c58f4c8E3d0300E5710743585
+    ├─ [2390] 0xEDe676F068c225315a3973BCdefB40364C26567d::wallet() [staticcall]
+    │   └─ ← [Return] 0x8e0c2ad73ef5e7Eb7630126195A37D74C3BD939e
+    ├─ [348] 0x8e0c2ad73ef5e7Eb7630126195A37D74C3BD939e::bridge() [staticcall]
+    │   └─ ← [Return] 0xEDe676F068c225315a3973BCdefB40364C26567d
+    ├─ [281] 0x8e0c2ad73ef5e7Eb7630126195A37D74C3BD939e::vault() [staticcall]
+    │   └─ ← [Return] 0xb80D1f2176d721c77A08EA1450B8266293d675de
+    ├─ [2335] 0xb80D1f2176d721c77A08EA1450B8266293d675de::wallet() [staticcall]
+    │   └─ ← [Return] 0x8e0c2ad73ef5e7Eb7630126195A37D74C3BD939e
+    ├─ [0] VM::parseJsonAddress("<stringified JSON>", ".base.token") [staticcall]
+    │   └─ ← [Return] 0x036CbD53842c5426634e7929541eC2318f3dCF7e
+    ├─ [303] 0x8e0c2ad73ef5e7Eb7630126195A37D74C3BD939e::token() [staticcall]
+    │   └─ ← [Return] 0x036CbD53842c5426634e7929541eC2318f3dCF7e
+    ├─ [0] VM::envAddress("AGENT_ADDRESS") [staticcall]
+    │   └─ ← [Return] <env var value>
+    ├─ [259] 0x8e0c2ad73ef5e7Eb7630126195A37D74C3BD939e::agent() [staticcall]
+    │   └─ ← [Return] 0xf22aE6D4425cD74a4B1e04705ba71a4EAD6D2b14
+    ├─ [303] 0xb80D1f2176d721c77A08EA1450B8266293d675de::token() [staticcall]
+    │   └─ ← [Return] 0x036CbD53842c5426634e7929541eC2318f3dCF7e
+    ├─ [9750] 0x036CbD53842c5426634e7929541eC2318f3dCF7e::balanceOf(0xb80D1f2176d721c77A08EA1450B8266293d675de) [staticcall]
+    │   ├─ [2553] 0xd74cc5d436923b8ba2c179b4bCA2841D8A52C5B5::balanceOf(0xb80D1f2176d721c77A08EA1450B8266293d675de) [delegatecall]
+    │   │   └─ ← [Return] 0
+    │   └─ ← [Return] 0
+    ├─ [0] console::log("base", "wiring ok, vault balance", 0) [staticcall]
+    │   └─ ← [Stop]
+    ├─ [0] VM::envString("UNICHAIN_SEPOLIA_RPC_URL") [staticcall]
+    │   └─ ← [Return] <env var value>
+    ├─ [0] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 1
+    ├─ [0] VM::parseJsonAddress("<stringified JSON>", ".unichain.front") [staticcall]
+    │   └─ ← [Return] 0x9C1E06984DC361226EB9db2f14A089f93b1Fe12d
+    ├─ [0] VM::parseJsonAddress("<stringified JSON>", ".unichain.wallet") [staticcall]
+    │   └─ ← [Return] 0xb80D1f2176d721c77A08EA1450B8266293d675de
+    ├─ [0] VM::parseJsonAddress("<stringified JSON>", ".unichain.vault") [staticcall]
+    │   └─ ← [Return] 0xEDe676F068c225315a3973BCdefB40364C26567d
+    ├─ [190] 0x9C1E06984DC361226EB9db2f14A089f93b1Fe12d::rc() [staticcall]
+    │   └─ ← [Return] 0x7B8111CDF7001721469c584Fa9613369F0E7aC1E
+    ├─ [310] 0x9C1E06984DC361226EB9db2f14A089f93b1Fe12d::proxy() [staticcall]
+    │   └─ ← [Return] 0x775c9B990ADe401060B78D0e98684eEf8d2466C1
+    ├─ [2390] 0x9C1E06984DC361226EB9db2f14A089f93b1Fe12d::wallet() [staticcall]
+    │   └─ ← [Return] 0xb80D1f2176d721c77A08EA1450B8266293d675de
+    ├─ [348] 0xb80D1f2176d721c77A08EA1450B8266293d675de::bridge() [staticcall]
+    │   └─ ← [Return] 0x9C1E06984DC361226EB9db2f14A089f93b1Fe12d
+    ├─ [281] 0xb80D1f2176d721c77A08EA1450B8266293d675de::vault() [staticcall]
+    │   └─ ← [Return] 0xEDe676F068c225315a3973BCdefB40364C26567d
+    ├─ [2335] 0xEDe676F068c225315a3973BCdefB40364C26567d::wallet() [staticcall]
+    │   └─ ← [Return] 0xb80D1f2176d721c77A08EA1450B8266293d675de
+    ├─ [0] VM::parseJsonAddress("<stringified JSON>", ".unichain.token") [staticcall]
+    │   └─ ← [Return] 0x31d0220469e10c4E71834a79b1f276d740d3768F
+    ├─ [303] 0xb80D1f2176d721c77A08EA1450B8266293d675de::token() [staticcall]
+    │   └─ ← [Return] 0x31d0220469e10c4E71834a79b1f276d740d3768F
+    ├─ [0] VM::envAddress("AGENT_ADDRESS") [staticcall]
+    │   └─ ← [Return] <env var value>
+    ├─ [259] 0xb80D1f2176d721c77A08EA1450B8266293d675de::agent() [staticcall]
+    │   └─ ← [Return] 0xf22aE6D4425cD74a4B1e04705ba71a4EAD6D2b14
+    ├─ [303] 0xEDe676F068c225315a3973BCdefB40364C26567d::token() [staticcall]
+    │   └─ ← [Return] 0x31d0220469e10c4E71834a79b1f276d740d3768F
+    ├─ [9750] 0x31d0220469e10c4E71834a79b1f276d740d3768F::balanceOf(0xEDe676F068c225315a3973BCdefB40364C26567d) [staticcall]
+    │   ├─ [2553] 0x67ce6DA63B1181557493A4A3D17b2Cfbfa7D54A1::balanceOf(0xEDe676F068c225315a3973BCdefB40364C26567d) [delegatecall]
+    │   │   └─ ← [Return] 0
+    │   └─ ← [Return] 0
+    ├─ [0] console::log("unichain", "wiring ok, vault balance", 0) [staticcall]
+    │   └─ ← [Stop]
+    ├─ [0] VM::envString("LASNA_RPC_URL") [staticcall]
+    │   └─ ← [Return] <env var value>
+    ├─ [0] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 2
+    └─ ← [Revert] no coordinator code on Lasna
+
+
+Gas used: 128872
+
+== Logs ==
+  base wiring ok, vault balance 0
+  unichain wiring ok, vault balance 0
+Error: script failed: no coordinator code on Lasna
+CHECK EXIT 1
+8.421000000000000000
+Fri Nov  6 18:03:32 CST 2026

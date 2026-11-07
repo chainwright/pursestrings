@@ -1,0 +1,17 @@
+{
+ "path": "topup",
+ "chain": "base",
+ "complete": true,
+ "latencySec": 2,
+ "answers": {
+  "GrantApplied#1": {
+   "destTx": "0xe553555026eaeae975876be51773b5dec52ca7014f9eca7a23e3700b5045682c",
+   "ts": 1794011956
+  }
+ },
+ "failures": [],
+ "reactiveTxs": [
+  "0xe72a615502dd0aab162c94a9e6f7cd348b119709d1eeb27c85c301a6b44f76ff"
+ ],
+ "otherCallbacks": []
+}

@@ -37,6 +37,7 @@ for p in $P_LASNA $P_BASE $P_UNI; do
 done
 
 export LASNA_RPC_URL="http://127.0.0.1:$P_LASNA"
+export LASNA_CALLBACK_INDEX=0x8888888888888888888888888888888888888888   # the stand-in records callbacks there
 export BASE_SEPOLIA_RPC_URL="http://127.0.0.1:$P_BASE"
 export UNICHAIN_SEPOLIA_RPC_URL="http://127.0.0.1:$P_UNI"
 
