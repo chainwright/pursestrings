@@ -78,7 +78,17 @@ def h(x):
 
 def receipt(tx, env):
     r = json.loads(cast("receipt", tx, "--json", env=env))
-    b = json.loads(cast("block", str(h(r["blockNumber"])), "--json", env=env))
+    # Public L2 RPCs sit behind load balancers: a receipt can arrive from a node that
+    # already has it while the next call lands on one that hasn't seen the block yet
+    # (seen live on Unichain Sepolia 07.11: "block 0x400cf68 not found"). Retry briefly.
+    for attempt in range(10):
+        try:
+            b = json.loads(cast("block", str(h(r["blockNumber"])), "--json", env=env))
+            break
+        except RuntimeError:
+            if attempt == 9:
+                raise
+            time.sleep(2)
     gas, price = h(r["gasUsed"]), h(r.get("effectiveGasPrice", "0x0"))
     return {
         "logs": [{"address": l["address"], "topics": l["topics"], "data": l["data"]} for l in r.get("logs", [])],
