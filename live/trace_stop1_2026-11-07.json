@@ -1,0 +1,21 @@
+{
+ "path": "stop",
+ "chain": "unichain",
+ "complete": true,
+ "latencySec": 2,
+ "answers": {
+  "EpochAck(1, frozen) on base": {
+   "destTx": "0x324710ed5b61a18c07a520f1c4bf195d631008363165be9764eee6598218ef1c",
+   "ts": 1794014389
+  },
+  "EpochAck(1, frozen) on unichain": {
+   "destTx": "0x10ada01fbab0e7c25632d85bc1f8b3551f7a2792d70f5c0123d2d31d22462a6e",
+   "ts": 1794014390
+  }
+ },
+ "failures": [],
+ "reactiveTxs": [
+  "0xc1bb73a4b21fcbfe014c93c4eda1e04719f727b1ec2418b9af25625bcd34e900"
+ ],
+ "otherCallbacks": []
+}
