@@ -103,10 +103,28 @@ def receipt(tx, env):
     }
 
 
+LOGS_CHUNK = int(os.environ.get("LOGS_CHUNK", "500"))
+
+
 def logs(rc, sig, from_block):
-    out = cast("logs", "--json", "--from-block", str(from_block), "--to-block", "latest", "--address", rc, sig,
-               env="LASNA_RPC_URL")
-    return json.loads(out) if out else []
+    """Coordinator logs from from_block to the head, fetched in chunks: public RPCs cap the
+    eth_getLogs block range (Base Sepolia: 200), and a donor loop can span ~8,000 Lasna blocks.
+    A refused chunk is halved and retried, down to 25 blocks."""
+    head = int(cast("block-number", env="LASNA_RPC_URL"))
+    res, start, size = [], from_block, LOGS_CHUNK
+    while start <= head:
+        end = min(head, start + size - 1)
+        try:
+            out = cast("logs", "--json", "--from-block", str(start), "--to-block", str(end), "--address", rc, sig,
+                       env="LASNA_RPC_URL")
+        except RuntimeError:
+            if size <= 25:
+                raise
+            size //= 2
+            continue
+        res.extend(json.loads(out) if out else [])
+        start = end + 1
+    return res
 
 
 def words(data):
