@@ -57,7 +57,7 @@ Tested by fuzz + mutation (not proven), against our own model of the network.
   callbacks on 07.11).
 - Fees never come out of the budget token.
 
-## Source comments to fix at the final redeploy
+## Source comments left out of date on the judged deployment
 
 The live contracts (07.11) are source-verified on Sourcify with an exact match, so `src/` on
 `main` stays byte-identical to what was deployed, comments included: editing a comment changes the
@@ -70,6 +70,7 @@ out of date on purpose:
 - `PursestringsReactive.sol:19` and `TestnetConfig.sol:7` cite "DOCS_BRIEF", our notes on
   Reactive's docs, which are not in this repo.
 
-Branch `w3-final` (not deployed) already has the fixed wording. Whichever code is redeployed for
-judging, the comments are fixed before that deploy, the date in them is set to the new deploy, and
-the new addresses are verified on Sourcify again. `main`'s comments are not changed in place.
+The judged deployment is this one (07.11.2026, `main`), with no redeploy for judging, so these
+comments stay as they are and the Sourcify matches stay exact. Branch `w3-final` (the next version,
+not the judged deployment) already has the fixed wording; if it is ever deployed, the date in them is
+set to that deploy and the new addresses are verified on Sourcify again.

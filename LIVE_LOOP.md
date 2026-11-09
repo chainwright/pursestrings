@@ -189,7 +189,7 @@ Re-read the gas at every phase boundary. If it crosses 180, finish the loop in p
 
 - Phase 1 deposits **3 lREACT** (the deposit settles the 0.0076 debt first).
 - Read the reserves at every phase boundary. **Below 1.5 before Phase 3 or Phase 4: deposit 1.5 more**, once.
-- **The deployer must keep ≥ 4.5 lREACT after the series** (the final deployment and its short hash set need ≈ 0.5 + 2.5). 10.16 − 3 − 1.5 ≈ 5.6, so there is room for one 1.5 top-up, not two. If a second one would be needed, run fewer STOP cycles instead (≈ 0.4 lREACT each at 100 gwei).
+- **The deployer must keep ≥ 4.5 lREACT after the series** (the rule of 09.11, when a final redeploy was still planned; the judged deployment is now this one, 07.11.2026 on `main`, and its funding plan is in the README). 10.16 − 3 − 1.5 ≈ 5.6, so there is room for one 1.5 top-up, not two. If a second one would be needed, run fewer STOP cycles instead (≈ 0.4 lREACT each at 100 gwei).
 - Before each STOP cycle the reserves must be ≥ 0.5; otherwise stop the series there.
 - **Don't deposit at the end.** What is left idles away at ≈ 3 a day, then the coordinator pauses again, at no cost.
 
@@ -371,7 +371,7 @@ python3 script/loop_logger.py paid-sum --chain unichain --from-block $U0
 
 ### Sample size
 
-This series gives **n = 10 top-ups**: state "median of 10". Ten more come from the final deployment (where the submission's hashes must come from anyway; report per deployment). Target: top-up median ≤ 6 s (both live loops so far: 2 s). Donor and STOP are reported separately.
+This series gives **n = 10 top-ups**: state "median of 10". The judged deployment is this one (07.11.2026, `main`), so the submission's hashes come from it; ten more top-ups come from the demo-video session on the same deployment (report per session). Target: top-up median ≤ 6 s (both live loops so far: 2 s). Donor and STOP are reported separately.
 
 ## 7. What to record for the submission and the judges
 
