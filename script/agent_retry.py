@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""The agent's side of the donor path (W1 gate P0-2): keep asking until the allowance arrives.
+"""The agent's side of the donor path: keep asking until the allowance arrives.
 
     agent_retry.py --chain base                      # pay $1 every 310 s until served, then pay it
     agent_retry.py --chain base --amount 1000000 --every-sec 310 --timeout-min 80
 
 Why: a short chain's want lives 40 min after its last Short or LowWater (wantTtl, TestnetConfig).
 A donor credit lands after the 30-min L2 wait plus the time until the next react (up to one Cron,
-~17.7 min), so a single ask can lapse before it is served (the W1 gate put that at ~40 %). Each
+~17.7 min), so a single ask can lapse before it is served (our review put that at ~40 %). Each
 refused `pay` here emits a fresh Short (the wallet re-arms Short after SHORT_REARM = 300 s, hence
 310 s), which keeps the want alive and hands the coordinator a react right after the wait.
 

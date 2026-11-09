@@ -10,7 +10,7 @@ every suite sees it: invariants, directed scenarios, Reactive glue, gas, the cov
 
 Each patch must match its source text exactly once, or `apply` fails (so a stale patch can
 never silently become a no-op "mutant" that trivially survives or is trivially killed).
-Y* are the round-2 judge's mutants; Z* break the round-3 fixes.
+Y* are survivors of a reviewer's mutation runner (review round 2); Z* break the round-3 fixes.
 """
 import pathlib
 import sys

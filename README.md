@@ -1,40 +1,54 @@
 # Pursestrings
 
-One daily allowance for your agents, on every chain. Money moves only locally
-(vault to wallet on the same chain); only the permission moves across chains,
-coordinated by a reactive contract on Reactive Network (Lasna).
+**One daily allowance shared by your agents' wallets across chains:** one agent wallet per chain, live on Base Sepolia and Unichain Sepolia, coordinated from Reactive Lasna. Money stays on its own chain (vault to wallet, same chain); only the permission moves. One STOP freezes every chain.
 
-Status: week 1. Deployed on testnets on 07.11.2026 (coordinator on Lasna, wallet + vault + front
-on Base Sepolia and on Unichain Sepolia; the console on Base Sepolia). Addresses, creation
-hashes and source verification (all eight are an exact match on Sourcify): `deployments/README.md`. The live smoke test passed: one top-up loop and one STOP, each
-answered on-chain 2 s after its origin (`live/LIVE_RUN_2026-11-07.md`). On 09.11 UTC the compact
-live series ran in full (`live/SERIES_2026-11-09.md`):
+For people who let AI agents pay for APIs and services on more than one chain and want one hard daily cap and one STOP that contracts enforce, with no server or custodian of ours in between.
+
+| Live loop (testnet, 09.11.2026) | Origin | Reactive tx on Lasna | Answer on the destination chain | Took |
+|---|---|---|---|---|
+| Top-up: agent refused on Base, budget granted | [Base `0xe762…b163`](https://base-sepolia.blockscout.com/tx/0xe7629c982f59b7f4e7401b7ede1391e2c6f244d181d8911bf95f7ade7deeb163) | [`0x0c12…fe7a`](https://lasna.reactscan.net/tx/0x0c12f2abf867f4f12519ebdfeace2c2357e0ed2f6df093956ac51541cf42fe7a) | [GrantApplied, Base `0x923a…f62c`](https://base-sepolia.blockscout.com/tx/0x923a57c6b9edc7df74c9144e6698dc6fd6535d029c875d383a937b9f2360f62c) | 1 s |
+| STOP pressed on Base, both chains frozen | [Base `0x9a41…cbda`](https://base-sepolia.blockscout.com/tx/0x9a41353d38e611b3ea6e4739e784844088304162ac6c6d0e4e9d5e4fa8e7cbda) | [`0x23ba…44fc`](https://lasna.reactscan.net/tx/0x23bab0c180052f0133313842320b5d6d23d86c547b812a921c3d3aab269c44fc) | [Base `0x54e8…5205`](https://base-sepolia.blockscout.com/tx/0x54e8194c99f1f7589004c2c4eaf5176bce43c60bce12009604fbc5c768205026), [Unichain `0x821d…3eea`](https://sepolia.uniscan.xyz/tx/0x821d90dc68b6143b8581202205bf2c55fbb3de66fc9704249278d36b69b93eea) | 3 s |
+| Donor: budget moved from Unichain to Base | [Base `0x6a8f…2b62`](https://base-sepolia.blockscout.com/tx/0x6a8f115cb141ef68124717b9af493a3e333578a23a0f0b502c271a72ffcd2b62) | [`0x4549…14bb`](https://lasna.reactscan.net/tx/0x4549903286455dda6be4ec54e7b9e9465534b5859ef5089004f1ff313fd314bb), [`0xfa5c…1a8f`](https://lasna.reactscan.net/tx/0xfa5c7b2d46f83f90fcd59926b194475eadd2f314fa0ad1045e718e8fedac1a8f) | [reclaim, Unichain `0xe3dd…1d39`](https://sepolia.uniscan.xyz/tx/0xe3ddec4724171323ee70f7e7662b6ddba34e5e85e3e4626a9a00df174f081d39), [GrantApplied, Base `0xfb1d…eca5`](https://base-sepolia.blockscout.com/tx/0xfb1d78dbc1da727b6b5c44d20fa277b8bbff4412c828015e04b6fcd690eeeca5) | 31 min |
+
+Answers reach our contracts through Reactive Network's callback proxies (`0x476F…3585` on Base Sepolia, `0x775c…66C1` on Unichain Sepolia), so an explorer shows Reactive's relayer as the sender. Almost all of the donor loop's 31 min is our deliberate 30-min L2 confirmation wait.
+
+**Verify in 5 minutes** (no key, no transaction):
+1. Open the links above: each answer is in a block seconds after its origin.
+2. `python3 script/checker.py` sums every USDC transfer out of the wallets per UTC day from the token's own logs (Python standard library, public RPCs, ~2 min) and prints `Over: $0.00`.
+3. `deployments/README.md` links each of the 8 contracts to its Sourcify exact match.
+4. Offline: `forge test` (~75–90 s, 67 tests) and `script/dryrun.sh` (the whole deployment and the loops on three local anvils).
+
+## Status (09.11.2026)
+
+Deployed on testnets on 07.11.2026 from this branch (`main`; `src/` unchanged since the deploy commit `0a2e273`): the coordinator on Lasna; a wallet, a vault and a callback front on Base Sepolia and on Unichain Sepolia; the owner console on Base Sepolia. Addresses, creation hashes and source verification: `deployments/README.md`. The smoke test on 07.11 answered one top-up and one STOP on-chain 2 s after each origin (`live/LIVE_RUN_2026-11-07.md`). On 09.11 UTC the compact live series ran in full (`live/SERIES_2026-11-09.md`, every hash):
 - 10 top-up loops: all complete, median 2 s, p95 3 s;
-- 3 donor loops: all complete, 30.4 min median (31.2 max) with the agent retrying every 5 min;
+- 3 donor loops: all complete, 30.4 min median (31.2 max) with the agent retrying every 5 min, almost all of it our deliberate 30-min L2 confirmation wait;
 - 5 STOP presses: both chains frozen, median 2 s, p95 3 s;
-- 12 successful agent payments, $17 in all, under the $20 daily cap.
+- 12 successful agent payments, $17 in all, under the $20 daily cap (paid to our own deployer address).
 
-The coordinator then used up its reserve and is paused again until funded (a paused coordinator
-is not charged; Cron resumes by itself after `depositTo`, seen live; see "If the coordinator
-looks inactive" below). `SPIKE_RESULT.md` covers the protocol spike: what passed, the mutants, what is
-still not covered, and what the spike changed in the design.
+The coordinator then used up its reserve and has been paused since 09.11 09:15 UTC (debt 0.0142 lREACT; see "If the coordinator looks inactive" below). The judged deployment will be the final one, kept funded through judging.
+
+## Run it
 
 ```
 forge build
-forge test             # invariants, directed scenarios, liveness, production timing, gas, Reactive glue (~30-45 s)
-script/mutants.sh      # full suite x 2 seeds per mutant: each must fail, the real contracts must pass (30-60 min, machine-dependent)
+forge test             # invariants, directed scenarios, liveness, production timing, gas, Reactive glue (~75–90 s; 67 tests)
+script/mutants.sh      # full suite x 2 seeds per mutant: each must fail, the real contracts must pass (≈ 45 min on our machine)
 script/dryrun.sh       # the whole testnet deployment + the loops + the pay-per-call demo, on three local anvils (no network)
 python3 script/test_loop_logger.py   # offline tests of the live-loop logger's matching
+python3 script/test_agent_retry.py   # offline tests of the donor-path agent
 python3 demo/test_api.py             # offline tests of the demo API's acceptance rules and the agent's 402 loop
 python3 script/test_checker.py       # offline tests of the checker's arithmetic, log chunking and day ranges
 python3 script/checker.py            # read-only: today's spending on every chain vs the cap, "Over: $0.00"
 ```
 
+`LIVE_LOOP.md` has the exact live commands: the smoke test and the compact series (10 top-up, 3 donor, 5 STOP loops, with an agent that keeps asking on the donor path), both as they were run, with measured costs.
+
 ## Pay-per-call demo (our own 402 flow, not x402)
 
 `demo/api.py` is a tiny HTTP service (Python standard library only). It sells rows of demo data at
 $1 a row. It uses its own minimal 402 flow with no outside facilitator. It is **not x402-compatible**:
-no x402 headers, no facilitator, no signed authorization. Real x402 is future work (`IDEA_V3.md` v3.1).
+no x402 headers, no facilitator, no signed authorization. Real x402 is future work.
 
 1. `GET /v1/snapshot?n=3` without payment answers **402** with a quote: the price, the payee, a fresh
    `callId`, the accepted chains, an expiry, and a private `claim`.
@@ -76,6 +90,7 @@ Limits:
 - The demo accepts a payment at 0 confirmations (`--min-confirmations` raises that), so an L2
   reorg after serving would cost the seller, not the budget.
 - Quotes live in a local JSON file (`cache/demo/api_state.json`).
+- The demo API has run on local chains only, not against the live deployment yet.
 
 `script/dryrun.sh` step 4c runs the whole flow on local chains:
 - 402 → pay → data;
@@ -86,7 +101,7 @@ Limits:
 - the checker reporting Over $0.00.
 
 The API's acceptance rules are mutation-checked: each rule switched off makes `demo/test_api.py`
-fail (`live/W2_DEMO_2026-11-09.md`).
+fail. The patches and their output are in `live/mutants_api_2026-11-09.log`.
 
 ## The checker
 
@@ -112,41 +127,14 @@ Live, read-only, 09.11 at ~10:03 UTC (`live/checker_2026-11-09.log`):
 - Cap $20: **Over: $0.00**.
 - 07.11 and 08.11: $0.00 against a $4 cap.
 
-Built on reactive-lib-omni v0.1.0. `LIVE_LOOP.md` has the exact commands: the smoke test and the
-compact series (10 top-up, 3 donor, 5 STOP loops, with an agent that keeps asking on the donor
-path), both as they were run, with measured costs.
-
-Tested by fuzz + mutation (not proven), against our own model of the network. MIT licensed.
-
-What the tests do and don't show:
-- The fuzz drives the coordinator through the test's own log decoder, not through the Reactive
-  adapter. The adapter (`react()`, every route plus Cron, proxy -> front -> wallet) is covered by
-  one scripted end-to-end test with a mock system contract.
-- The owner-level STOP check (s) is one-directional: it checks that a STOP holds everywhere after
-  the network heals, not that an unstop takes effect (a late press can re-freeze; fail-safe).
-- Confirmation waits are 16 min on Sepolia (above its 12.8 min finality) and 30 min on Base and
-  Unichain Sepolia. The 30 min is a typical time to L2 finality, not a guaranteed bound: a stalled
-  batcher can leave L2 blocks unsafe longer, so L2 safety assumes a healthy sequencer and batcher
-  until Reactive confirms it delivers only finalized logs.
-- STOP latency after a lost STOP log depends on the Cron period (1000 Lasna blocks): one
-  heartbeat cycle plus delivery, 51-59 min in our model for a Cron of 17-19.5 min (53 at the
-  17.74 min derived from Lasna's block time). The observed Cron1000 period is 17.66 min (mean of
-  173 live intervals, 1,050-1,074 s), so the 17.74-min model figure stands within 0.5 %. A STOP
-  whose log is delivered (the normal case) took 2 s live.
-- Live so far:
-  - 07.11: 76 of 76 Cron ticks received while funded; one top-up loop and one STOP, 2 s each; the
-    USDC grant callback used 245,809 gas of its 700k limit.
-  - 09.11, the series: top-up median 2 s (n = 10); donor 30.4 min median (n = 3, agent retrying
-    every 5 min); STOP to both chains frozen, median 2 s (n = 5).
-  - Not yet live: the lost-STOP heartbeat path, and the demo API (dry run only so far). Every other
-    latency figure is from Foundry and our network model.
-
 ## If the coordinator looks inactive
 
 Reactscan may show the coordinator on Lasna as inactive. That means it ran out of lREACT and is
-paused, not broken. A paused coordinator is not charged and gets no `react()` calls. Nothing can
-overspend while it is paused: a wallet can spend only today's bucket, and no new bucket is
-granted. Each vault stays withdrawable by its owner on its own chain.
+paused, not broken. A paused coordinator is not charged and gets no `react()` calls. While paused,
+no new budget is granted. Each wallet can spend at most what it already holds (today's bucket, and
+after midnight a tomorrow bucket that had already landed), so spending stays within the cap in
+force before the pause. Cap changes and a STOP's spread to other chains wait for the next deposit.
+Each vault stays withdrawable by its owner on its own chain.
 
 One `depositTo` wakes it, and Cron resumes by itself. We saw this live on 09.11:
 - deposit of 3 lREACT at 05:18:06 UTC, which settled the 0.0076 debt first:
@@ -157,41 +145,33 @@ One `depositTo` wakes it, and Cron resumes by itself. We saw this live on 09.11:
 
 A STOP pressed during a pause still holds. The pressing chain freezes in the same transaction,
 and on the first Cron tick after the deposit the coordinator carries the STOP to every chain
-(`test_debtPause48h_*` in `test/Directed.t.sol`: a 48 h pause with every event in it lost).
+(`test_debtPause48h_*` in `test/Directed.t.sol`: a 48 h pause with every event in it lost). Other
+chains keep spending only what they already hold until the deposit.
 
-The current deployment has been paused since the end of the 09.11 series (debt 0.0142 lREACT) and
-stays that way until the final deployment. Plan for the judging window: the judged coordinator is
-the final deployment, kept funded from submission until results. At the measured ≈ 2.9 lREACT a
-day (100 gwei), two weeks is ≈ 40 lREACT, about 0.4 Sepolia ETH through the faucet. We deposit
-≈ 6 lREACT every two days, never far ahead, because reserves can't be withdrawn, and check after
-each deposit that the next tick carries our tx (`loop_logger.py cron-check`). If it lapses anyway,
-it pauses in the safe state above, and one deposit brings it back.
+The current deployment has been paused since 09.11 09:15 UTC (debt 0.0142 lREACT) and stays that
+way until the final deployment. Plan for the judging window: the judged coordinator is the final
+deployment, kept funded from submission until results. At the measured ≈ 2.9 lREACT a day
+(100 gwei), 05.12 to late December is ≈ 26 days ≈ 75 lREACT idle, plus ≈ 0.6 per STOP cycle
+(≈ 0.75 Sepolia ETH through the faucet). We deposit ≈ 6 lREACT every two days, never far ahead,
+because reserves can't be withdrawn, and check after each deposit that the next tick carries our
+tx (`loop_logger.py cron-check`). If it lapses anyway, it pauses in the safe state above, and one
+deposit brings it back.
 
-## Fees and funding (for the live loop)
+## More
 
-- **Reactive contract on Lasna:** fund its reserves with
-  `cast send 0x8888888888888888888888888888888888888888 "depositTo(address)" $RC --value <lREACT>`.
-  It also keeps a balance of its own (send lREACT to it); the system contract collects fees from
-  that balance with `pay()`, and anyone can clear a debt with `coverDebt()`. A contract in debt
-  gets no `react()` calls, so STOP would stop propagating: keep it funded.
-  Cost drivers: Cron1000 (~75-85 ticks a day), the heartbeat (a re-read to each chain every
-  ~51-56 min when idle, plus the `react()` for its answer), and one `react()` per wallet event.
-  **Measured: ≈ 2.9 lREACT a day idle at 100 gwei** (≈ 5 at 175): the 3-lREACT deposit lasted
-  ≈ 22 h with the smoke test inside. An idle tick uses 93-115k gas (≈ 0.02 lREACT); the heaviest
-  live react was 507,771 gas.
-  The series (09.11, 100 gwei) cost **4.51 lREACT in ≈ 4 h**. Per loop, from the reserve deltas:
-  - top-up ≈ 0.057, ticks included;
-  - donor ≈ 0.33;
-  - STOP press + unstop ≈ 0.30, plus ≈ 1.3 for the 30-min re-reads after five epoch rolls.
-  A front that stays dead while its agent keeps asking costs about one cancel per 40 min.
-- **Callback front on each destination chain:** fund with
-  `cast send $CALLBACK_PROXY "depositTo(address)" $FRONT --value <ETH>` and/or send ETH to the
-  front; the proxy collects with `pay()`, `coverDebt()` works the same way, and the owner can
-  take the float back with `withdrawFees()`. Callback fees are billed on gas used (per the docs;
-  to confirm on the live loop), so the generous gas limits in `src/reactive/TestnetConfig.sol`
-  should cost nothing unless used. **Measured:** < 1e-6 ETH per callback on Base Sepolia (the
-  front's 0.002 ETH reserve was 0.0019739 after ~35 callbacks).
-- Fees never come out of the budget token.
+- `docs/DESIGN_AND_TESTS.md`: the protocol design, the network model, the invariants, the 39
+  mutants, what turned out wrong in the design, and the honest list of what is not covered.
+- `docs/COSTS_AND_LIMITS.md`: what the tests do and don't show, fees and funding, measured costs.
+- `LIVE_LOOP.md`: the live run book. `live/`: the raw records of every live run (traces, snapshots,
+  logs, reports of 07.11 and 09.11).
+
+Tested by fuzz + mutation (not proven), against our own model of the network. Built on
+reactive-lib-omni v0.1.0 (commit `3ade0dc`).
+
+**How this was built.** During the event, from 05.11.2026: the design was written on 05.11 and the
+protocol spike was committed the same day; the git history is kept as it was, unrewritten. Commit
+messages mention our internal review rounds ("round N", "judge", "hound", "W1–W3", "P1-8"): those are
+our own reviewers and work items, not the event's.
 
 Licences: this repo is MIT. `forge-std` (MIT/Apache-2.0) and `reactive-lib-omni` are git
 submodules, not vendored; `reactive-lib-omni` carries `SPDX: UNLICENSED` and has no LICENSE file.

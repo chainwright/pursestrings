@@ -18,8 +18,8 @@ How a loop is matched (one loop at a time; not in the 2 h before 00:00 UTC, when
        topup  GrantSent for the origin chain and the origin's UTC day (not tomorrow's pre-grant)
        donor  ReclaimSent from another chain, then Credited (RECLAIM), then that GrantSent
        stop   Frozen (epoch e)
-     A candidate must pass two floors, so a loop can't match the loop before it (W1 gate P0-3:
-     the Lasna search starts ~35 s before the origin, and a previous loop's GrantSent or Frozen
+     A candidate must pass two floors, so a loop can't match the loop before it
+     (the Lasna search starts ~35 s before the origin, and a previous loop's GrantSent or Frozen
      on the same chain used to be taken):
        - its Lasna block time >= the origin's block time - LOOP_CLOCK_SKEW_SEC (default 2);
        - its grant id (topup, donor) or epoch (stop) > the largest one already recorded in
@@ -45,7 +45,7 @@ How a loop is matched (one loop at a time; not in the 2 h before 00:00 UTC, when
 counted twice.
 
 Costs are recorded twice: what the receipts show (gas used x effective gas price), and the fee by
-the documented formula (DOCS_BRIEF section 5): Lasna max(price, basefee) x (gas + 100k); callbacks
+the documented formula (Reactive's docs, economy): Lasna max(price, basefee) x (gas + 100k); callbacks
 max(price, basefee) x 1.1 x (gas + extraGas), extraGas 80k on the L2s. Both are to be checked
 against the reserves/debt the network actually charges.
 Each trace is appended as one JSON line to live/loops.jsonl (LOOPS_FILE overrides).
@@ -243,7 +243,7 @@ LABEL_EPOCH = re.compile(r"^EpochAck\((\d+), frozen\)")
 
 def recorded_floors(path, origin_tx):
     """The largest grant id and epoch already used by recorded loops with another origin tx.
-    Reads the fields written since P0-3 (grantId, epoch) and, for older records, the answer
+    Reads the fields written since the matching fix (grantId, epoch) and, for older records, the answer
     labels. A missing file gives (-1, -1)."""
     gid, ep = -1, -1
     if not os.path.exists(path):

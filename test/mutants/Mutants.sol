@@ -18,14 +18,14 @@ import {IERC20Min, IWalletInbox, K_RECLAIM, K_VOID, K_ROLL, K_EPOCH} from "../..
 ///  7 core:   credit returns at head (no wait, no re-read)  (rule 2, reorgs)
 ///  8 core:   no dedup of credits                           (rule 4, core side)
 ///  9 wallet: the pressing chain does not freeze locally    (STOP)
-/// 10 core:   wait, then credit WITHOUT re-reading the fact (v3.1 "time-based wait" alone)
+/// 10 core:   wait, then credit WITHOUT re-reading the fact ("time-based wait" alone)
 /// 11 wallet: credit allowance even if the vault transfer failed (failed-grant path)
 /// 12 core:   grant sent without debiting the reserve; debited when acknowledged (rule 1)
-/// 13 core:   STOP never propagated: every epoch message says "not frozen"   (judge X1)
-/// 14 core:   unstop lifts whatever epoch is frozen, ignoring the one it names (judge X2)
-/// 15 core:   re-read credited without the age check on the fact            (judge X3)
-/// 16 core:   re-read requested at once, without the core-side wait         (judge X11)
-/// 17 core:   cap messages applied regardless of nonce order (stale re-applied) (judge X9)
+/// 13 core:   STOP never propagated: every epoch message says "not frozen"   (reviewer X1)
+/// 14 core:   unstop lifts whatever epoch is frozen, ignoring the one it names (reviewer X2)
+/// 15 core:   re-read credited without the age check on the fact            (reviewer X3)
+/// 16 core:   re-read requested at once, without the core-side wait         (reviewer X11)
+/// 17 core:   cap messages applied regardless of nonce order (stale re-applied) (reviewer X9)
 library MutantIds {
     uint256 constant WALLET_NO_DEDUP = 1;
     uint256 constant CORE_CREDIT_RECLAIM_ON_SEND = 2;

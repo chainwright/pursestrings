@@ -314,7 +314,7 @@ contract DirectedTest is Test {
         _assertSafe();
     }
 
-    /// The judge's R2-1 scenario: the press log is lost and the agent on the pressing chain stays
+    /// A reviewer's R2-1 scenario: the press log is lost and the agent on the pressing chain stays
     /// idle; only the agents on chains 0 and 2 act, on a healthy network. The coordinator's
     /// heartbeat (a re-read, driven by Cron) reaches chain 1, which re-announces its press.
     function test_stop_lostPressIdleAgentOnPressingChain() public {
@@ -448,7 +448,7 @@ contract DirectedTest is Test {
         _assertSafe();
     }
 
-    /// The judge's R2-2 scenario: every callback to chain 2 is lost (its front is in debt) while
+    /// A reviewer's R2-2 scenario: every callback to chain 2 is lost (its front is in debt) while
     /// its agent keeps asking. Chain 2 absorbs at most one grant; healthy chain 0 is still served.
     function test_deadChainAbsorbsAtMostOneGrant() public {
         h.killChain(2, 1 days);
@@ -479,7 +479,7 @@ contract DirectedTest is Test {
         _assertSafe();
     }
 
-    // ------------------------------------------- coordinator paused in debt (W1 gate P1-9)
+    // ------------------------------------------- coordinator paused in debt
 
     /// Drop every origin log queued for the coordinator: while it is in debt it gets no react(),
     /// so (worst case) nothing emitted in the window is ever delivered. A paused coordinator also

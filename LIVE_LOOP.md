@@ -1,8 +1,8 @@
-# Live loop run book (gate part 2): Lasna ↔ Base Sepolia ↔ Unichain Sepolia
+# Live loop run book: Lasna ↔ Base Sepolia ↔ Unichain Sepolia
 
-**Status (09.11.2026 UTC):** the staged smoke test (steps A–E) passed live on 07.11 UTC (`live/LIVE_RUN_2026-11-07.md`). The coordinator then ran idle for ≈22 h, used up its 3-lREACT reserve and has been paused since (debt 0.0076 lREACT; a paused coordinator is not charged). The compact series in §6 is next. Contract addresses and creation hashes: `deployments/README.md`.
+**Status (09.11.2026 UTC):** the staged smoke test (steps A–E) passed live on 07.11 UTC (`live/LIVE_RUN_2026-11-07.md`), and the compact series in §6 ran on 09.11 (`live/SERIES_2026-11-09.md`). The coordinator has been paused since 09.11 09:15 UTC, debt 0.0142 lREACT (a paused coordinator is not charged). Contract addresses and creation hashes: `deployments/README.md`.
 
-Still open with reactivedevs (W1 gate P1-6):
+Still open with the Reactive developers (t.me/reactivedevs):
 - delivery depth (head, safe or finalized);
 - duplicate delivery;
 - retries of failed callbacks;
@@ -18,8 +18,8 @@ Everything below has been rehearsed end to end on three local anvil chains with 
 | Fact | Value | How |
 |---|---|---|
 | Lasna block time | **1.064 s per block** over 10,000 blocks (06.11) | block timestamps |
-| Cron1000 period, **observed** | **1,059.5 s mean (17.66 min)** over 173 intervals, range 1,050–1,074 s; the model's 17.74 min (from block time) is 0.5 % off | timestamps of tick blocks n·1000+1, 7,716,001 → 7,889,001 (W1 gate) |
-| Ticks received while funded | **76 of 76**; our reactive tx lands in block n·1000+1 | tick blocks (W1 gate); `loop_logger.py cron-check --block N` reads one |
+| Cron1000 period, **observed** | **1,059.5 s mean (17.66 min)** over 173 intervals, range 1,050–1,074 s; the model's 17.74 min (from block time) is 0.5 % off | timestamps of tick blocks n·1000+1, 7,716,001 → 7,889,001 |
+| Ticks received while funded | **76 of 76**; our reactive tx lands in block n·1000+1 | tick blocks; `loop_logger.py cron-check --block N` reads one |
 | Idle tick gas | 93–115k (median 115k) ≈ 0.019–0.022 lREACT at 100 gwei; a tick with a heartbeat callback 149–179k; the heaviest live react 507,771 (the pre-grant tick, block 7,790,001) | receipts |
 | Short react with a grant / STOP react | 349,065 gas (0.045 lREACT at 100 gwei) / 272,350 (0.037) | `live/loops.jsonl` |
 | USDC grant callback | **245,809 gas** for the whole destination tx (limit 700k); EpochAck callbacks 158,490 (Base) and 120,893 (Unichain) | `live/loops.jsonl` |
@@ -29,8 +29,8 @@ Everything below has been rehearsed end to end on three local anvil chains with 
 | Lasna gas price | 100 gwei (07.11 and 09.11 03:18 UTC; 175 on 06.11) | `cast gas-price` |
 | USDC on Base Sepolia and Unichain Sepolia | 6 decimals, EIP-712 version "2", at the addresses in §1 | `decimals()`, `version()` |
 | Deploy | coordinator CREATE 4,593,296 gas at 110 gwei = 0.505 lREACT; the L2 sides ≈ 0.00005 / 0.000005 ETH | receipts |
-| Holdings (09.11 03:45 UTC) | deployer (S76, 0xeE7F…cbfc) **10.16 lREACT**, $16 USDC and ≈ 0.0045 ETH on each L2; agent 0.0005 ETH on each L2 | balances |
-| Agent | key in the secret store as **S77**, address `0xf22aE6D4425cD74a4B1e04705ba71a4EAD6D2b14` | — |
+| Holdings (09.11 03:45 UTC) | deployer (0xeE7F…cbfc) **10.16 lREACT**, $16 USDC and ≈ 0.0045 ETH on each L2; agent 0.0005 ETH on each L2 | balances |
+| Agent | address `0xf22aE6D4425cD74a4B1e04705ba71a4EAD6D2b14`; its key comes from your own secret store (§1) | — |
 
 ## 0. What is where
 
@@ -50,15 +50,15 @@ The contracts are built on **reactive-lib-omni v0.1.0** (`lib/reactive-lib-omni`
 Run the whole session in a subshell (`bash`, then `exit` at the end), so the keys don't outlive it. Or `unset DEPLOYER_PRIVATE_KEY AGENT_PRIVATE_KEY` when done.
 
 ```bash
-cd /Users/mini/agents/sora/hackathons/reactive_2026/pursestrings
+cd pursestrings   # the repo root
 export PATH=$HOME/.foundry/bin:$PATH
 export LASNA_RPC_URL=https://lasna-rpc.rnk.dev/
 export BASE_SEPOLIA_RPC_URL=<your Base Sepolia RPC>
 export UNICHAIN_SEPOLIA_RPC_URL=<your Unichain Sepolia RPC>
 
-# keys: from the secret store into the environment; never echo them
-export DEPLOYER_PRIVATE_KEY="$(python3 /Users/mini/agents/sora/scripts/secret.py S76)"   # deployer = owner, 0xeE7F…cbfc
-export AGENT_PRIVATE_KEY="$(python3 /Users/mini/agents/sora/scripts/secret.py S77)"      # agent
+# keys: read them from your own secret store or env var into the environment; never echo them
+export DEPLOYER_PRIVATE_KEY="$(<your secret store's read command> deployer)"   # deployer = owner, 0xeE7F…cbfc
+export AGENT_PRIVATE_KEY="$(<your secret store's read command> agent)"         # agent
 export AGENT_ADDRESS=0xf22aE6D4425cD74a4B1e04705ba71a4EAD6D2b14
 export PAYEE_ADDRESS=0xeE7F470E1C47431b033F8638E932a9ebfFB3cbfc   # the deployer: paid USDC can go back to the vaults
 
@@ -67,11 +67,8 @@ export USDC_UNICHAIN_SEPOLIA=0x31d0220469e10c4E71834a79b1f276d740d3768F  # check
 export DEPLOYMENTS_FILE=deployments/latest.json
 ```
 
-- Every script reads the keys with `vm.envUint` inside forge, so they never appear on a command line or in the process list. A `-vvvv` trace shows `<env var value>`, not the key (judge's test, round 6). The logger needs no key.
-- **About the agent key:** it already exists as S77, so nothing needs creating.
-  - The round-6 one-liner that created a key piped it into `scripts/secret.py --add "<value>" …`. That puts the value on `secret.py`'s command line, briefly visible in the process list (`ps`).
-  - `secret.py` (outside this project) only takes the value as an argument. To create another key without that exposure, `secret.py` would first need to read the value from stdin.
-  - For a TEST-ONLY key the exposure is small, but don't use that pattern for anything else.
+- Every script reads the keys with `vm.envUint` inside forge, so they never appear on a command line or in the process list. A `-vvvv` trace shows `<env var value>`, not the key. The logger needs no key.
+- **Creating a key:** let your secret store generate it, or pass the value on stdin. A key given as a command-line argument to any tool is briefly visible in the process list (`ps`).
 
 ## 2. Rehearse (free, no network)
 
@@ -91,17 +88,17 @@ Expected output:
 
 - **The address checks in `Deploy.s.sol` run in forge's simulation only.** These are `require(nonce unchanged)` and `require(coordinator == predicted)`. In the simulation nothing else touches the Lasna nonce, so they can't fail there.
 - **The real guard is the fixed nonce.** Forge broadcasts the coordinator's CREATE with the nonce fixed in the simulation. It either lands at the predicted address, or it is rejected ("nonce too low") and the already-deployed L2 sides are orphaned and must be redeployed. A coordinator at an address the fronts don't pin cannot happen.
-- **Don't use S76 for anything else on Lasna during the deploy.**
+- **Don't use the deployer key for anything else on Lasna during the deploy.**
 - `deployments/latest.json` is written during the simulation, so after a failed broadcast it describes contracts that don't exist. **`script/Check.s.sol` after every deploy is the real verification.** Fund nothing before it passes.
-- Failure cases (judge round 6): an orphaned L2 side holds no funds when FRONT_FUNDING_WEI = 0, and vaults are empty at deploy. If the coordinator lands and an L2 side fails, it is a live, subscribed contract with no working fronts, and whatever you put into it is gone: **it has no withdraw, no unsubscribe and no owner**. That is why it is deployed with 0 lREACT attached, and funded only after Check.
+- Failure cases: an orphaned L2 side holds no funds when FRONT_FUNDING_WEI = 0, and vaults are empty at deploy. If the coordinator lands and an L2 side fails, it is a live, subscribed contract with no working fronts, and whatever you put into it is gone: **it has no withdraw, no unsubscribe and no owner**. That is why it is deployed with 0 lREACT attached, and funded only after Check.
 
 ## 4. Timing
 
-- **Never deploy or loop in the 2 h before 00:00 UTC: 22:00–24:00 UTC = 16:00–18:00 CST** (`TZ=UTC date` to check). In that window the coordinator pre-grants tomorrow's share. Before the vaults are funded, those come back as void grants, each with a 30-min confirmation wait. They also emit `GrantSent` events for the next day. The logger ignores those, but they muddy the first run.
-- Start in a UTC morning (from 00:00 UTC, i.e. after 18:00 CST), so a whole UTC day is available.
+- **Never deploy or loop in the 2 h before 00:00 UTC: 22:00–24:00 UTC** (`TZ=UTC date` to check). In that window the coordinator pre-grants tomorrow's share. Before the vaults are funded, those come back as void grants, each with a 30-min confirmation wait. They also emit `GrantSent` events for the next day. The logger ignores those, but they muddy the first run.
+- Start in a UTC morning (from 00:00 UTC), so a whole UTC day is available.
 - **Fund both vaults before the first payment.** Otherwise the first grant isn't applied (NA_UNFUNDED), and the loop waits ~40 min for the void credit.
 
-## 5. Staged smoke test (engineer_r6 §6, adjusted; run on 07.11, kept as the record of how)
+## 5. Staged smoke test (run on 07.11, kept as the record of how)
 
 **Step A, free, read-only.** Already done on 06.11 (table above). Repeat on the day of the run:
 ```bash
@@ -123,7 +120,7 @@ CAP=4000000 FRONT_FUNDING_WEI=0 RC_FUNDING_WEI=0 \
   forge script script/Deploy.s.sol --broadcast --slow --gas-estimate-multiplier 200
 forge script script/Check.s.sol      # must print "base wiring ok", "unichain wiring ok", "coordinator wiring ok"
 ```
-- CAP is $4 a day for the smoke test (judge D-4). A surprise then moves at most $4 of faucet USDC. Raise it later with `setCap`; a raise applies at once.
+- CAP is $4 a day for the smoke test. A surprise then moves at most $4 of faucet USDC. Raise it later with `setCap`; a raise applies at once.
 - `--gas-estimate-multiplier 200` gives headroom on Lasna. Gas that isn't used is not charged.
 - **Learned live (07.11): the public Lasna RPC refuses any tx whose gasLimit × maxFee exceeds 1 lREACT** ("tx fee (1.84 ether) exceeds the configured cap"). With the ×2 multiplier the coordinator's CREATE was refused while both L2 sides landed. Nothing was spent on Lasna and the nonce stayed 0, so the same initcode (from `broadcast/multi/Deploy.s.sol-latest/run.json`) was sent with `cast send --create --legacy --gas-price 110gwei --gas-limit 7000000 --nonce 0` and landed at the predicted address. Next time: deploy the L2 sides with forge and the coordinator this way, or use a multiplier ≤ 130 with an explicit legacy price.
 - Keep `broadcast/`: it holds every tx hash for the submission.
@@ -152,7 +149,7 @@ python3 script/loop_logger.py trace --path stop --chain unichain --tx "$(python3
 forge script script/Loop.s.sol --sig "unstop()" --broadcast
 ```
 - The logger reports a loop as complete only when the wallet's own event is in a destination receipt: `GrantApplied` for this grant's id, or `EpochAck(e, frozen)` from every wallet. Latency is measured to that event. Heartbeats and other callbacks of the same reactive tx are listed as "other" and don't count.
-- Steps A–E passed on 07.11. The series in §6 replaces the old "setCap 40000000, vaults to $40 each" plan (W1 gate P0-1).
+- Steps A–E passed on 07.11. The series in §6 replaces the old "setCap 40000000, vaults to $40 each" plan.
 
 ## Budget of the smoke test, as it went (07.11; replaces the 06.11 estimate)
 
@@ -165,10 +162,10 @@ forge script script/Loop.s.sol --sig "unstop()" --broadcast
 | Idle Cron + heartbeat answers | ≈ 3–5 per ½ day, "6–10 a day at 175 gwei" | **≈ 2.9 lREACT a day at 100 gwei** (≈ 1.5 per ½ day; ≈ 5 a day at 175) |
 | L2 callbacks | ≈ 0.003 ETH per L2 | < 1e-6 ETH each |
 
-- **The faucet converts 1 ETH to 100 lREACT** (DOCS_BRIEF §4): send ETH to the faucet contract on Base Sepolia (`0x2afaFD298b23b62760711756088F75B7409f5967`, `forge script script/Loop.s.sol --sig "faucet(uint256)" <wei> --broadcast`) or on Sepolia (`0x9b9BB25f1A81078C544C829c5EB7822d747Cf434`, `script/SepoliaFaucet.s.sol`). At most 5 ETH per tx; anything above that is lost. On 08.11 a 0.05 Sepolia ETH drip bought ≈ 5 lREACT, so the deployer holds 10.16.
+- **The faucet converts 1 ETH to 100 lREACT** (Reactive's docs): send ETH to the faucet contract on Base Sepolia (`0x2afaFD298b23b62760711756088F75B7409f5967`, `forge script script/Loop.s.sol --sig "faucet(uint256)" <wei> --broadcast`) or on Sepolia (`0x9b9BB25f1A81078C544C829c5EB7822d747Cf434`, `script/SepoliaFaucet.s.sol`). At most 5 ETH per tx; anything above that is lost. On 08.11 a 0.05 Sepolia ETH drip bought ≈ 5 lREACT, so the deployer holds 10.16.
 - Never deposit much at once into the coordinator's reserves: it can't be recovered. A coordinator that runs out pauses (debt, no reacts) and costs nothing while paused.
 
-## 6. The compact live series (W1 gate §7; run on 9 or 10 Nov)
+## 6. The compact live series (run on 09.11.2026)
 
 10 top-up loops, 3 donor loops, 5 STOP cycles, in that order, in one session. The order matters: every epoch roll drains both wallets into their vaults, so STOP goes last; the donor loops need the pool empty and Unichain holding slack, which the top-up phase leaves behind.
 
@@ -184,9 +181,9 @@ Re-read the gas at every phase boundary. If it crosses 180, finish the loop in p
 
 ### When
 
-- **Origin transactions only between 08:00 and 13:00 CST** (14:00–19:00 UTC), so the whole series stays inside one UTC day. Check with `TZ=UTC date` before starting.
-- **Never 16:00–18:00 CST** (22:00–24:00 UTC): the coordinator pre-grants tomorrow then. The read-only tail of Phase 4 and Phase 5 may run past 13:00, but end before 15:30 CST.
-- Timeline at the full plan: Phase 0–1 08:00–08:35, Phase 2 08:35–09:10 (T7 ≈ 08:55), Phase 3 from T7 + 41 min ≈ 09:40 to ≈ 11:30, Phase 4 ≈ 11:30–12:00 plus the 45-min tail, Phase 5 ≈ 12:50. If Phase 3 can't start by 10:00 CST, run the trimmed donor count (2).
+- **Origin transactions only between 14:00 and 19:00 UTC** (any 5-h window early in a UTC day works; the 09.11 series started at 05:17 UTC), so the whole series stays inside one UTC day. Check with `TZ=UTC date` before starting.
+- **Never 22:00–24:00 UTC**: the coordinator pre-grants tomorrow then. The read-only tail of Phase 4 and Phase 5 may run past 19:00, but end before 21:30 UTC.
+- Timeline at the full plan (UTC): Phase 0–1 14:00–14:35, Phase 2 14:35–15:10 (T7 ≈ 14:55), Phase 3 from T7 + 41 min ≈ 15:40 to ≈ 17:30, Phase 4 ≈ 17:30–18:00 plus the 45-min tail, Phase 5 ≈ 18:50. If Phase 3 can't start by 16:00 UTC, run the trimmed donor count (2).
 
 ### Reserves (lREACT)
 
@@ -227,7 +224,7 @@ snap() {
 }
 
 # one top-up loop: $1 chain (0 base, 1 unichain), $2 amount. Origin, then its trace; then 60 s
-# before the next origin (belt and braces with the logger's floors, W1 gate P0-3)
+# before the next origin (belt and braces with the logger's floors)
 topup() {
   local n; n=$([ "$1" = 0 ] && echo base || echo unichain)
   forge script script/Loop.s.sol --sig "pay(uint256,uint256)" $1 $2 --broadcast | grep -E "unspent before|paid|refused"
@@ -254,8 +251,8 @@ forge script script/Loop.s.sol --sig "fundVault(uint256,uint256)" 1 6000000 --br
 python3 script/loop_logger.py cron-check --wait-min 20    # the next tick block must hold our reactive tx
 ```
 - `cron-check` waits for the next tick block (n·1000 + 1), lists our reactive tx in it with its gas, and the reserves before and after (≈ 0.02–0.03 less).
-- **No tick within 20 min after the deposit: stop.** Ask reactivedevs (P1-6) and don't burn more.
-- Base needs $18 of backing: 12 for the six Phase 2 grants and 6 for the three donor grants (a reclaim returns Unichain's tokens to the Unichain vault; the Base grant is pulled from the Base vault). The review's 14 would leave exactly $18.000000; 15 leaves $1 of margin. The deployer holds $16 per chain, and paid USDC comes back to it (it is the payee).
+- **No tick within 20 min after the deposit: stop.** Ask the Reactive developers and don't burn more.
+- Base needs $18 of backing: 12 for the six Phase 2 grants and 6 for the three donor grants (a reclaim returns Unichain's tokens to the Unichain vault; the Base grant is pulled from the Base vault). 14 would leave exactly $18.000000; 15 leaves $1 of margin. The deployer holds $16 per chain, and paid USDC comes back to it (it is the payee).
 
 ```bash
 forge script script/Loop.s.sol --sig "setCap(uint256)" 20000000 --broadcast
@@ -274,23 +271,23 @@ Each line: `topup <chain> <amount>`. Chain 0 = Base (B), 1 = Unichain (U).
 | T2 | `topup 0 1000000` | B refused (Short) → grant $2 | B 2 |
 | R2 | `forge script script/Loop.s.sol --sig "pay(uint256,uint256)" 0 1000000 --broadcast` | B **paid** $1: the "refused → served → paid" moment; record the hash, no trace | B 1 |
 | T3 | `topup 1 3000000` | U refused, short by 1 → grant $2 | U 4 |
-| T4 | `topup 0 1000000` | B **paid**, leaves 0 < $1: LowWater → refill ahead $2 | B 2 |
+| T4 | `topup 0 1000000` | B **paid**, leaves 0 < $1: LowWater → top-up $2 | B 2 |
 | T5 | `topup 1 5000000` | U refused → grant $2 | U 6 |
-| T6 | `topup 0 2000000` | B paid, LowWater → refill ahead | B 2 |
+| T6 | `topup 0 2000000` | B paid, LowWater → top-up | B 2 |
 | T7 | `topup 1 7000000` | U refused → grant $2. **U's last ask: note the time** | U 8 |
-| T8 | `topup 0 2000000` | B paid, LowWater → refill ahead | B 2 |
+| T8 | `topup 0 2000000` | B paid, LowWater → top-up | B 2 |
 | T9 | `topup 0 2000000` | same | B 2 |
 | T10 | `topup 0 2000000` | same; the pool is now **0** | B 2 |
 
 - Each loop triggers exactly one top-up: a $2 grant (6 to B, 4 to U = $20).
-- Sub-paths, n = 5 each: refusal T1, T2, T3, T5, T7; refill ahead T4, T6, T8, T9, T10. Report them separately and together (n = 10).
-- **Unichain must end with $8 unspent** for the three donor loops (8 → 6 → 4 → 2, its floor). So no payment on U in this phase. (This differs from the gate's table, whose "pay 1 after T1, T3, T5, T7" would leave U at $4–7; the served-then-paid moment is R2 on Base instead, which keeps T4 a refill-ahead loop.)
+- Sub-paths, n = 5 each: refusal T1, T2, T3, T5, T7; LowWater top-up after a paid call T4, T6, T8, T9, T10. Report them separately and together (n = 10).
+- **Unichain must end with $8 unspent** for the three donor loops (8 → 6 → 4 → 2, its floor). So no payment on U in this phase. (Paying $1 on U after T1, T3, T5 and T7 would leave U at $4–7, so the served-then-paid moment is R2 on Base instead, which keeps T4 a LowWater top-up.)
 - Paid in Phase 2: $10 on B (R2 1 + T4 1 + 4 × 2).
 - `snap` after T10: pool 0, U unspent 8000000, B unspent 2000000. Reserves ≥ 1.5, or deposit 1.5 now.
 
 ### Phase 3: 3 donor loops (≈ 1 h 50; trimmed plan: 2)
 
-Start **D1 no earlier than T7 + 41 min**: a chain that asked within its 40-min want TTL is no donor. The donor phase needs the agent to keep asking (W1 gate P0-2): a single ask lapses 40 min after it, while the credit lands after the 30-min L2 wait plus up to one Cron period. `script/agent_retry.py` asks `pay $1` every 310 s (Short re-arms at 300 s) until the grant lands, then pays it.
+Start **D1 no earlier than T7 + 41 min**: a chain that asked within its 40-min want TTL is no donor. The donor phase needs the agent to keep asking: a single ask lapses 40 min after it, while the credit lands after the 30-min L2 wait plus up to one Cron period. `script/agent_retry.py` asks `pay $1` every 310 s (Short re-arms at 300 s) until the grant lands, then pays it.
 
 ```bash
 donor() {  # $1 = origin amount on Base: 2000000 for D1, 1000000 for D2 and D3
@@ -372,15 +369,15 @@ python3 script/loop_logger.py paid-sum --chain unichain --from-block $U0
 - Trimmed plan (10 / 2 / 3): ≈ 3.3 at 100 gwei, ≈ 5.8 at 175.
 - L2 ETH: about 40 agent pays at ~57k gas, < 0.00002 ETH per chain (the agent holds 0.0005); callbacks < 1e-6 ETH each.
 
-### Gate note
+### Sample size
 
-IDEA_V3:89 asks for 20 runs. This series gives **n = 10 top-ups**: state "median of 10". The other 10 come from the final deployment in W4 (where the submission's hashes must come from anyway; report per deployment), or the gate text is amended. Pass criterion: top-up median ≤ 6 s (both live loops so far: 2 s). Donor and STOP are reported separately.
+This series gives **n = 10 top-ups**: state "median of 10". Ten more come from the final deployment (where the submission's hashes must come from anyway; report per deployment). Target: top-up median ≤ 6 s (both live loops so far: 2 s). Donor and STOP are reported separately.
 
 ## 7. What to record for the submission and the judges
 
 - Every hash, from `broadcast/`, `deployments/README.md` and the series files: origin tx → reactive tx → `getCallbacks` → destination tx (the answering one).
 - Median and p95 latency per path (`summary`).
-- The Cron1000 period: observed 17.66 min (W1 gate); `cron-check` adds single ticks.
+- The Cron1000 period: observed 17.66 min; `cron-check` adds single ticks.
 - The real charged cost: reserves/debt before and after a known number of loops, against the formula.
 - USDC callback gas: 245,809 against the 700k limit (measured). Still open: whether the proxy bills on gas used or on the limit (compare the front reserves' drop per callback with both).
 - The first successful agent payments on-chain (R2 and the donor loops' final pays) and the checker's sum.
@@ -389,6 +386,6 @@ IDEA_V3:89 asks for 20 runs. This series gives **n = 10 top-ups**: state "median
 
 - How a reactive tx links to its origin: **resolved.** The reactive tx's input holds the origin tx hash (its LogRecord), seen on both 07.11 loops; the logger now links on it and falls back to time and id floors only after a 90-s grace.
 - `getCallbacks` is served at `0x…ffffff` on Lasna, not by the system contract (07.11). The logger parses `cast call --json` and falls back to raw output.
-- `depositTo`, `reserves` and `debt` come from DOCS_BRIEF, not the library (they worked live on 07.11).
+- `depositTo`, `reserves` and `debt` come from Reactive's docs, not the library (they worked live on 07.11).
 - Whether Cron delivery restarts by itself after a paused coordinator is funded again: the first check of Phase 1.
-- Whether origin logs emitted while the coordinator is in debt are dropped or queued (P1-6).
+- Whether origin logs emitted while the coordinator is in debt are dropped or queued.

@@ -5,13 +5,13 @@
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 origin 0xf1af94ab6c150801e0286e6df36dafeeab0f0c8a2d90671964623ba39069f63b
 Traceback (most recent call last):
-  File "/Users/mini/agents/sora/hackathons/reactive_2026/pursestrings/script/loop_logger.py", line 311, in <module>
+  File "./script/loop_logger.py", line 311, in <module>
     main()
-  File "/Users/mini/agents/sora/hackathons/reactive_2026/pursestrings/script/loop_logger.py", line 307, in main
+  File "./script/loop_logger.py", line 307, in main
     a.fn(a)
-  File "/Users/mini/agents/sora/hackathons/reactive_2026/pursestrings/script/loop_logger.py", line 168, in trace
+  File "./script/loop_logger.py", line 168, in trace
     lasna_from = max(0, h(cast("find-block", str(origin["ts"]), env="LASNA_RPC_URL")) - 2)
-  File "/Users/mini/agents/sora/hackathons/reactive_2026/pursestrings/script/loop_logger.py", line 67, in cast
+  File "./script/loop_logger.py", line 67, in cast
     raise RuntimeError(f"cast {args[0]} failed: {r.stderr.strip()[:300]}")
 RuntimeError: cast find-block failed: Error: server returned an error response: error code -32014: block not found with number 0x1, data: {"code":"ErrEndpointMissingData","message":"remote endpoint does not have this data","details":{"finalizedBlock":7717228,"maxAvailableRecentBlocks":0,"upstreamId":"lasna-omni-node-0-full","latestBlock
 == done Fri Nov  6 18:39:18 CST 2026

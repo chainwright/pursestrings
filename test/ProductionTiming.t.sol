@@ -180,7 +180,7 @@ contract ProductionTimingTest is Test {
 
     /// A shortfall larger than one donor's slack: chain 2 needs $8, chain 0 can give only $2 above
     /// its floor, chain 1 can give $8. Both are asked within the same confirmation cycle, so chain
-    /// 2 is served within one cycle. (The judge's J5, "ask only the first eligible donor", does not
+    /// 2 is served within one cycle. (A reviewer's J5, "ask only the first eligible donor", does not
     /// break this: the first donor's own Reclaimed event triggers the next react, which asks the
     /// next donor a minute later. Measured identical, so J5 is not in the mutation gate.)
     function test_shortfallLargerThanOneDonorIsServedInOneCycle() public {

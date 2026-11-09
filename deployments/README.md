@@ -1,10 +1,9 @@
 # Deployments
 
-`latest.json` holds the addresses of the live testnet deployment of 07.11.2026 UTC (06.11 evening
-CST), written by `script/Deploy.s.sol`. No secrets. `dryrun.json` (gitignored) is the local anvil
+`latest.json` holds the addresses of the live testnet deployment of 07.11.2026 UTC, written by `script/Deploy.s.sol`. No secrets. `dryrun.json` (gitignored) is the local anvil
 rehearsal's.
 
-The creation hashes below were checked read-only on 09.11 UTC (08.11 evening CST; `cast receipt <hash> contractAddress`
+The creation hashes below were checked read-only on 09.11 UTC (`cast receipt <hash> contractAddress`
 returns the address). Use this table, not the contract names in forge's multi-chain record:
 `broadcast/multi/Deploy.s.sol-latest/run.json` names the Unichain Sepolia contracts after the Base
 Sepolia ones at the same addresses (it calls the Unichain front `OwnerConsole`), and it has the

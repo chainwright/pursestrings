@@ -72,7 +72,7 @@ contract Loop is Script {
     }
 
     /// Fee reserves: `rcWei` lREACT for the coordinator via the system contract's depositTo, and
-    /// `frontWei` ETH for each front via its callback proxy's depositTo (DOCS_BRIEF section 5;
+    /// `frontWei` ETH for each front via its callback proxy's depositTo (Reactive's docs;
     /// the depositTo signature is from the docs, not from reactive-lib-omni, which doesn't declare
     /// it). Sent by the deployer.
     function fundReserves(uint256 rcWei, uint256 frontWei) external {
@@ -128,7 +128,7 @@ contract Loop is Script {
     }
 
     /// lREACT from the Reactive testnet faucet: sends `sepEthWei` Base Sepolia ETH to the faucet
-    /// contract (DOCS_BRIEF section 4: 1 ETH -> 100 lREACT, at most 5 ETH per tx, anything above
+    /// contract (Reactive's docs: 1 ETH -> 100 lREACT, at most 5 ETH per tx, anything above
     /// is lost), credited to the deployer on Lasna.
     function faucet(uint256 sepEthWei) external {
         require(sepEthWei <= 5 ether, "the faucet keeps anything above 5 ETH per tx");

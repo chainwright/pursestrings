@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Demo pay-per-call API for Pursestrings: our own minimal 402 flow, no outside facilitator.
 It is NOT x402-compatible (no x402 headers, no facilitator, no signed authorization); real x402
-is future work (IDEA_V3 v3.1).
+is future work.
 
     python3 demo/api.py [--port 8402] [--unit-usd 1]
 
