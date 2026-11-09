@@ -61,8 +61,8 @@ Tested by fuzz + mutation (not proven), against our own model of the network.
 
 The live contracts (07.11) are source-verified on Sourcify with an exact match, so `src/` on
 `main` stays byte-identical to what was deployed, comments included: editing a comment changes the
-metadata hash and the match would drop to partial. Two comments on `main` are therefore out of date
-on purpose:
+metadata hash and the match would drop to partial. These comments on `main` are therefore left
+out of date on purpose:
 - `src/reactive/PursestringsReactive.sol:16-17` says "Not yet run against the real system
   contract"; it has run on Lasna since 07.11.2026.
 - `src/reactive/TestnetConfig.sol:8` says "Nothing here has been deployed yet"; it has, on
