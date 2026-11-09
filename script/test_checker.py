@@ -171,6 +171,33 @@ class Fetching(unittest.TestCase):
         r = C.check_day(d, dep, rpcs, 25_000_000, None)
         self.assertEqual((r["over"], r["canStillLeave"], r["capSource"]), (0, 4_999_999, "--cap-usd"))
 
+    def test_cursor_reads_only_new_blocks_and_keeps_the_unsettled_tail_out(self):
+        d = 20766
+        start = d * 86400
+        ts = [start - 100 + i for i in range(1100)]            # the day is still running
+        b0 = ts.index(start)
+        head = len(ts) - 1
+        logs = [tlog(W1, PAYEE, 1_000_000, block=b0 + 10),
+                tlog(W1, PAYEE, 2_000_000, block=b0 + 500),
+                tlog(W1, PAYEE, 4_000_000, block=head - 3)]     # unsettled: may still be reorged out
+        dep = {"coordinator": "0x" + "f1" * 20, "a": {"chainId": 11, "token": TOKEN, "wallet": W1, "vault": V1}}
+        ch = FakeChain(ts, logs, limit=1000, chain_id=11)
+        cursor = {}
+        r = C.check_day(d, dep, {11: ch}, 20_000_000, None, cursor)
+        self.assertEqual(r["spent"], 7_000_000)
+        (saved,) = cursor.values()
+        self.assertEqual(saved["upTo"], head - C.SETTLE)
+        self.assertEqual(saved["tally"][W1.lower()]["spent"], 3_000_000)   # the tail is not frozen in
+        # the chain grows by 200 blocks, the unsettled payment is reorged out, a new one lands
+        ch.ts_list = ts + [ts[-1] + 1 + i for i in range(200)]
+        ch.logs = logs[:2] + [tlog(W1, PAYEE, 8_000_000, block=head + 150)]
+        ch.ranges = []
+        r = C.check_day(d, dep, {11: ch}, 20_000_000, None, cursor)
+        self.assertEqual(r["spent"], 11_000_000)
+        self.assertEqual(min(a for a, _ in ch.ranges), head - C.SETTLE + 1)  # nothing settled is re-read
+        # a run without the cursor agrees
+        self.assertEqual(C.check_day(d, dep, {11: ch}, 20_000_000, None)["spent"], 11_000_000)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

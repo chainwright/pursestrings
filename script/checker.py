@@ -15,7 +15,8 @@ spent. Everything else that leaves a wallet is spent.
 The day's block range on each chain is found from block timestamps (bisection), not from block
 counts: Base Sepolia makes a block every 0.2 s and Unichain Sepolia every 1 s. Logs are queried in
 chunks that each public RPC accepts (Base Sepolia 200 blocks, Unichain Sepolia 1000) and paced to
-its rate limit; a full Base Sepolia day is ~2,160 queries, about 2 minutes.
+its rate limit; a full Base Sepolia day is ~2,160 queries, about 2 minutes. With --cursor FILE the
+settled part (more than 64 blocks behind the head) is kept, so the next run reads only new blocks.
 
 The cap of day d is the coordinator's capOfDay(d) on Lasna, unless --cap-usd is given. A day the
 coordinator never opened has cap 0, so anything spent on it is over.
@@ -93,7 +94,18 @@ def day_label(d):
     return datetime.datetime.fromtimestamp(d * E.DAY, datetime.timezone.utc).strftime("%Y-%m-%d")
 
 
-def check_day(d, dep, rpcs, cap_override, lasna):
+SETTLE = 64  # blocks behind head kept out of the cursor, so a short reorg can't freeze a wrong tally
+
+
+def merge(a, b):
+    """Pure: add two tally rows."""
+    return {k: a.get(k, 0) + b.get(k, 0) for k in ("spent", "returned", "payments", "returns")}
+
+
+def check_day(d, dep, rpcs, cap_override, lasna, cursor=None):
+    """cursor: a dict kept between runs (see --cursor). Per chain and day it holds the tallies of
+    blocks b0..upTo, all at least SETTLE below the head when read, so a rerun only reads the new
+    blocks plus the unsettled tail."""
     start, end = d * E.DAY, (d + 1) * E.DAY
     chains, spent_total = [], 0
     by_chain = {}
@@ -105,12 +117,22 @@ def check_day(d, dep, rpcs, cap_override, lasna):
         b0 = rpc.first_block_at_or_after(start, head)
         b1 = min(head, rpc.first_block_at_or_after(end, head) - 1)
         partial = rpc.block_ts(head) < end
-        logs = []
-        if b0 <= b1:
-            # topic 1 (`from`) is an OR list of every wallet on this chain
-            logs = rpc.get_logs(token, [E.TOPIC_TRANSFER, ["0x" + E.addr_word(w) for w, _ in ws]], b0, b1)
         vault_of = {w.lower(): (v.lower() if v else None) for w, v in ws}
-        t = tally(logs, vault_of)
+        key = f"{chain_id}:{token.lower()}:{','.join(sorted(vault_of))}:{d}"
+        saved = (cursor or {}).get(key)
+        if saved and saved["b0"] != b0:
+            saved = None  # the day's first block moved (it shouldn't): start over
+        frm = saved["upTo"] + 1 if saved else b0
+        topics = [E.TOPIC_TRANSFER, ["0x" + E.addr_word(w) for w, _ in ws]]  # `from` = any wallet here
+        settled_to = min(b1, head - SETTLE)
+        fresh_settled = tally(rpc.get_logs(token, topics, frm, settled_to), vault_of) if frm <= settled_to else \
+            {w: merge({}, {}) for w in vault_of}
+        base = {w: merge(saved["tally"].get(w, {}) if saved else {}, fresh_settled[w]) for w in vault_of}
+        if cursor is not None and settled_to >= frm - 1:
+            cursor[key] = {"b0": b0, "upTo": max(settled_to, frm - 1), "tally": base}
+        tail_from = max(frm, settled_to + 1)
+        tail = tally(rpc.get_logs(token, topics, tail_from, b1), vault_of) if tail_from <= b1 else {}
+        t = {w: merge(base[w], tail.get(w, {})) for w in vault_of}
         for w, _ in ws:
             r = t[w.lower()]
             spent_total += r["spent"]
@@ -143,7 +165,15 @@ def main():
     ap.add_argument("--day", action="append", help="UTC day YYYY-MM-DD (repeatable); default today")
     ap.add_argument("--cap-usd", type=float, help="use this cap instead of the coordinator's capOfDay")
     ap.add_argument("--json", action="store_true", help="print one JSON object instead of the report")
+    ap.add_argument("--cursor", help="JSON file that keeps settled tallies between runs (a dashboard reruns "
+                    "every few seconds and reads only the new blocks)")
     a = ap.parse_args()
+    cursor = None
+    if a.cursor:
+        try:
+            cursor = json.load(open(a.cursor))
+        except (FileNotFoundError, json.JSONDecodeError):
+            cursor = {}
     dep = json.load(open(os.environ.get("DEPLOYMENTS_FILE", "deployments/latest.json")))
     dry = bool(dep.get("dryRun"))
     try:
@@ -155,7 +185,11 @@ def main():
         cap = None if a.cap_usd is None else int(round(a.cap_usd * 10 ** DECIMALS))
         lasna = None if cap is not None else E.rpc_for(int(dep.get("lasnaChainId", 5318007)), dry)
         days = [day_number(s) for s in a.day] if a.day else [int(time.time()) // E.DAY]
-        reports = [check_day(d, dep, rpcs, cap, lasna) for d in days]
+        reports = [check_day(d, dep, rpcs, cap, lasna, cursor) for d in days]
+        if a.cursor:
+            tmp = a.cursor + ".tmp"
+            json.dump(cursor, open(tmp, "w"))
+            os.replace(tmp, a.cursor)
     except E.RpcError as e:
         print(f"RPC error: {e}", file=sys.stderr)
         sys.exit(2)
