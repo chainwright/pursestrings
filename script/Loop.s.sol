@@ -145,9 +145,45 @@ contract Loop is Script {
     /// Sends `wei_` of the chain's native ETH from the deployer to AGENT_ADDRESS, for the agent's
     /// own transaction fees (its payments). Never budget tokens.
     function fundAgent(uint256 chain, uint256 wei_) external {
+        _sendEth(chain, vm.envAddress("AGENT_ADDRESS"), wei_);
+    }
+
+    /// The owner allowlists (or removes) `payee` on the wallet on `chain`
+    /// (SpendWallet.setPayee is onlyOwner; Deploy.s.sol only sets the first payee).
+    function setPayee(uint256 chain, address payee, bool allowed) external {
+        SpendWallet w = _wallet(chain);
+        vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
+        w.setPayee(payee, allowed);
+        vm.stopBroadcast();
+        require(w.payeeAllowed(payee) == allowed, "payee flag not set");
+        console2.log(allowed ? "payee allowed on chain" : "payee removed on chain", chain);
+    }
+
+    /// Sends `wei_` of native ETH from the deployer to PAYEE_ADDRESS on `chain`, for the payee's
+    /// own fee when it returns its USDC (returnPayee). Never budget tokens.
+    function fundPayee(uint256 chain, uint256 wei_) external {
+        _sendEth(chain, vm.envAddress("PAYEE_ADDRESS"), wei_);
+    }
+
+    /// The payee (PAYEE_PRIVATE_KEY) sends its whole budget-token balance on `chain` back to the
+    /// deployer (DEPLOYER_ADDRESS), who refills the vaults with fundVault.
+    function returnPayee(uint256 chain) external {
+        string memory j = vm.readFile(vm.envOr("DEPLOYMENTS_FILE", string("deployments/latest.json")));
+        vm.createSelectFork(vm.envString(rpcs[chain]));
+        IERC20Min t = IERC20Min(vm.parseJsonAddress(j, string.concat(".", keys[chain], ".token")));
+        uint256 pk = vm.envUint("PAYEE_PRIVATE_KEY");
+        uint256 bal = t.balanceOf(vm.addr(pk));
+        console2.log("payee returns to the deployer, chain / amount", chain, bal);
+        if (bal == 0) return;
+        vm.startBroadcast(pk);
+        require(t.transfer(vm.envAddress("DEPLOYER_ADDRESS"), bal), "transfer");
+        vm.stopBroadcast();
+    }
+
+    function _sendEth(uint256 chain, address to, uint256 wei_) internal {
         vm.createSelectFork(vm.envString(rpcs[chain]));
         vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
-        (bool ok,) = payable(vm.envAddress("AGENT_ADDRESS")).call{value: wei_}("");
+        (bool ok,) = payable(to).call{value: wei_}("");
         require(ok, "transfer failed");
         vm.stopBroadcast();
     }

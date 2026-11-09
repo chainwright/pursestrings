@@ -20,7 +20,8 @@
 #   4c. demo/api.py + demo/agent.py: 402 -> pay -> data; a replay, a fake Paid (backed by real
 #      tokens from a non-wallet) and an onlooker without the quote's claim are refused; an over-allowance call gets amber, is served once the
 #      grant lands; a call above what is left of the cap gets red; script/checker.py: Over $0.00.
-#   5. script/Loop.s.sol: the live-loop driver (pay, setCap, fundReserves, fundVault, stop)
+#   5. script/Loop.s.sol: the live-loop driver (pay, setCap, fundReserves, fundVault, stop), and the
+#      second payee for the video (setPayee, fundPayee, returnPayee back to the deployer)
 # The deployer key is anvil's public development key, derived into an environment variable and
 # never printed. Broadcast logs go to cache/dryrun/ and addresses to deployments/dryrun.json
 # (both gitignored). The anvils are stopped on exit.
@@ -214,5 +215,29 @@ ok() { if grep -q "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"; then echo "   $1: o
 "$FORGE" script script/Loop.s.sol --sig "fundAgent(uint256,uint256)" 0 500000000000000 --broadcast 2>&1 | ok "fundAgent 0.0005 ETH on Base Sepolia"
 stop_tx="$(python3 script/loop_logger.py last-tx --fn stop --chain unichain)"
 echo "   last STOP tx (for the logger): $stop_tx"
+echo "   a second payee (the video's API-seller stand-in): allow, fund its gas, and get its tokens back"
+PAYEE_PRIVATE_KEY="$("$CAST" wallet private-key "test test test test test test test test test test test junk" 2)"
+export PAYEE_PRIVATE_KEY
+P2="$("$CAST" wallet address --mnemonic "test test test test test test test test test test test junk" --mnemonic-index 2)"
+DEPLOYER_ADDRESS="$("$CAST" wallet address --mnemonic "test test test test test test test test test test test junk" --mnemonic-index 0)"
+export DEPLOYER_ADDRESS
+W0="$(python3 -c 'import json; print(json.load(open("deployments/dryrun.json"))["base"]["wallet"])')"
+T0="$(python3 -c 'import json; print(json.load(open("deployments/dryrun.json"))["base"]["token"])')"
+[ "$("$CAST" call "$W0" 'payeeAllowed(address)(bool)' "$P2" --rpc-url "$BASE_SEPOLIA_RPC_URL")" = false ] \
+  || { echo "FAILED: the second payee is allowed before setPayee"; exit 1; }
+"$FORGE" script script/Loop.s.sol --sig "setPayee(uint256,address,bool)" 0 "$P2" true --broadcast 2>&1 | ok "setPayee (second payee) on Base Sepolia"
+[ "$("$CAST" call "$W0" 'payeeAllowed(address)(bool)' "$P2" --rpc-url "$BASE_SEPOLIA_RPC_URL")" = true ] \
+  || { echo "FAILED: setPayee did not allow the second payee"; exit 1; }
+[ "$("$CAST" call "$W0" 'payeeAllowed(address)(bool)' "$PAYEE_ADDRESS" --rpc-url "$BASE_SEPOLIA_RPC_URL")" = true ] \
+  || { echo "FAILED: the first payee must stay allowed"; exit 1; }
+PAYEE_ADDRESS="$P2" "$FORGE" script script/Loop.s.sol --sig "fundPayee(uint256,uint256)" 0 200000000000000 --broadcast 2>&1 | ok "fundPayee 0.0002 ETH on Base Sepolia"
+"$CAST" send "$T0" 'mint(address,uint256)' "$P2" 3000000 --private-key "$DEPLOYER_PRIVATE_KEY" --rpc-url "$BASE_SEPOLIA_RPC_URL" >/dev/null
+before="$("$CAST" call "$T0" 'balanceOf(address)(uint256)' "$DEPLOYER_ADDRESS" --rpc-url "$BASE_SEPOLIA_RPC_URL" | cut -d' ' -f1)"
+"$FORGE" script script/Loop.s.sol --sig "returnPayee(uint256)" 0 --broadcast 2>&1 | ok "returnPayee: the payee's tokens back to the deployer"
+after="$("$CAST" call "$T0" 'balanceOf(address)(uint256)' "$DEPLOYER_ADDRESS" --rpc-url "$BASE_SEPOLIA_RPC_URL" | cut -d' ' -f1)"
+left="$("$CAST" call "$T0" 'balanceOf(address)(uint256)' "$P2" --rpc-url "$BASE_SEPOLIA_RPC_URL" | cut -d' ' -f1)"
+[ "$((after - before))" = 3000000 ] && [ "$left" = 0 ] \
+  || { echo "FAILED: returnPayee moved $((after - before)), payee left $left"; exit 1; }
+echo "   returnPayee moved 3000000 back; the payee holds 0"
 echo "dry run complete"
 
