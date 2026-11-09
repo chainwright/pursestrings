@@ -51,7 +51,7 @@ contract ProductionTimingTest is Test {
     /// core); and at the default P with the other agents paying $1 every 5 min. Measured at 1-min
     /// resolution. Logs the worst per period and what was spent meanwhile.
     /// Since W3 the heartbeat is 40 min only while agents are active (an agent spent or asked
-    /// within the last 2 h); idle it is 120 min (TestnetConfig.IDLE_HEARTBEAT, W1 gate P2-2). So:
+    /// within the last 2 h); idle it is 120 min (TestnetConfig.IDLE_HEARTBEAT). So:
     ///  - other agents active (they pay $1 every 5 min): one 40-min beat cycle, as before;
     ///  - nobody active anywhere: one 120-min beat cycle, ceil(120 min / P) * P + 2 min. Nothing is
     ///    spent meanwhile, so the longer wait costs nothing; see the next test for an agent that
@@ -156,7 +156,7 @@ contract ProductionTimingTest is Test {
         _assertSafe();
     }
 
-    // ----------------------------------------------------------- idle cost (P2-2)
+    // ----------------------------------------------------------------- idle cost
 
     /// A day with no agent activity at all, only Cron, on the W2 coordinator (beat every 40 min)
     /// and the W3 one (idle beat every 120 min). Counts heartbeats and reacts; the lREACT figures in
@@ -261,7 +261,7 @@ contract ProductionTimingTest is Test {
 
     /// A shortfall larger than one donor's slack: chain 2 needs $8, chain 0 can give only $2 above
     /// its floor, chain 1 can give $8. Both are asked within the same confirmation cycle, so chain
-    /// 2 is served within one cycle. (The judge's J5, "ask only the first eligible donor", does not
+    /// 2 is served within one cycle. (A reviewer's J5, "ask only the first eligible donor", does not
     /// break this: the first donor's own Reclaimed event triggers the next react, which asks the
     /// next donor a minute later. Measured identical, so J5 is not in the mutation gate.)
     function test_shortfallLargerThanOneDonorIsServedInOneCycle() public {

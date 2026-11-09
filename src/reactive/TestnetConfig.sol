@@ -4,8 +4,9 @@ pragma solidity ^0.8.29;
 import {BudgetCore} from "../BudgetCore.sol";
 
 /// Deployment numbers for the testnet live loop (Lasna <-> Sepolia, Base Sepolia, Unichain
-/// Sepolia). Sources: DOCS_BRIEF.md (proxies, extraGas/maxChargeGas read on-chain 04.11.2026,
-/// Cron topics) and test/Gas.t.sol (measured wallet gas). Nothing here has been deployed yet.
+/// Sepolia). Sources: Reactive's docs (proxies, extraGas/maxChargeGas read on-chain 04.11.2026,
+/// Cron topics) and test/Gas.t.sol (measured wallet gas). Running on Lasna since 07.11.2026 (the
+/// deployed version is branch main).
 library TestnetConfig {
     uint256 internal constant LASNA = 5318007;
     uint256 internal constant SEPOLIA = 11155111;
@@ -46,7 +47,7 @@ library TestnetConfig {
     /// callbacks per ~51-56 min in an idle system.
     uint64 internal constant HEARTBEAT = 40 minutes;
 
-    /// Refill ahead by burn rate (W3, from the 09.11 live numbers: top-up p50 2 s, chain to chain
+    /// Refill ahead by burn rate (from the 09.11 live numbers: top-up p50 2 s, chain to chain
     /// ~30 min, Cron1000 17.66 min observed):
     ///  - a top-up covers 1 h of the chain's measured rate (at least one chunk, cap / 10);
     ///  - it goes out once the projection says < 20 min of spending is left: one Cron period
@@ -59,7 +60,7 @@ library TestnetConfig {
     uint32 internal constant REFILL_LEAD = 20 minutes;
     uint32 internal constant RECLAIM_LEAD = 90 minutes;
 
-    /// Idle heartbeat (W3, W1 gate P2-2). While no agent has spent or asked for 2 h, each chain is
+    /// Idle heartbeat. While no agent has spent or asked for 2 h, each chain is
     /// beaten every 120 min instead of 40: ~11.6 beats a day per chain instead of ~27 at the observed
     /// 17.66-min Cron. A lost STOP press then reaches every chain within ceil(120 / P) x P + delivery
     /// (~126 min) while nothing is being spent, and within one 40-min cycle of the first sign of

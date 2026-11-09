@@ -4,15 +4,15 @@
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 origin 0x2422cae8cc5abc77f7ec104708ec6ea1e56a8f5b6c9b4ac09b52e1321a657d35
 Traceback (most recent call last):
-  File "/Users/mini/agents/sora/hackathons/reactive_2026/pursestrings/script/loop_logger.py", line 325, in <module>
+  File "./script/loop_logger.py", line 325, in <module>
     main()
-  File "/Users/mini/agents/sora/hackathons/reactive_2026/pursestrings/script/loop_logger.py", line 321, in main
+  File "./script/loop_logger.py", line 321, in main
     a.fn(a)
-  File "/Users/mini/agents/sora/hackathons/reactive_2026/pursestrings/script/loop_logger.py", line 180, in trace
+  File "./script/loop_logger.py", line 180, in trace
     origin = receipt(a.tx, env)
-  File "/Users/mini/agents/sora/hackathons/reactive_2026/pursestrings/script/loop_logger.py", line 81, in receipt
+  File "./script/loop_logger.py", line 81, in receipt
     b = json.loads(cast("block", str(h(r["blockNumber"])), "--json", env=env))
-  File "/Users/mini/agents/sora/hackathons/reactive_2026/pursestrings/script/loop_logger.py", line 71, in cast
+  File "./script/loop_logger.py", line 71, in cast
     raise RuntimeError(f"cast {args[0]} failed: {r.stderr.strip()[:300]}")
 RuntimeError: cast block failed: Error: block 0x400cf68 not found
 == traced Fri Nov  6 19:19:48 CST 2026 exit 0

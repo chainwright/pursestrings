@@ -1,10 +1,9 @@
 # Deployments
 
-`latest.json` holds the addresses of the live testnet deployment of 07.11.2026 UTC (06.11 evening
-CST), written by `script/Deploy.s.sol`. No secrets. `dryrun.json` (gitignored) is the local anvil
+`latest.json` holds the addresses of the live testnet deployment of 07.11.2026 UTC, written by `script/Deploy.s.sol`. No secrets. `dryrun.json` (gitignored) is the local anvil
 rehearsal's.
 
-The creation hashes below were checked read-only on 09.11 UTC (08.11 evening CST; `cast receipt <hash> contractAddress`
+The creation hashes below were checked read-only on 09.11 UTC (`cast receipt <hash> contractAddress`
 returns the address). Use this table, not the contract names in forge's multi-chain record:
 `broadcast/multi/Deploy.s.sol-latest/run.json` names the Unichain Sepolia contracts after the Base
 Sepolia ones at the same addresses (it calls the Unichain front `OwnerConsole`), and it has the
@@ -42,7 +41,8 @@ foundry.toml remappings.txt` is empty), and each on-chain creation input starts 
 the creation bytecode `forge build` produces at HEAD. Settings: solc 0.8.29, optimizer on, 200 runs,
 EVM `cancun`, no via-IR. Constructor arguments were taken from each creation tx's input (the bytes
 after the creation bytecode), not from forge's multi-chain record, whose Unichain arguments are
-mislabeled. Base Sepolia's and Unichain Sepolia's Blockscout pick the Sourcify match up and show
+mislabeled. This holds on branch `main`; branch `w3-final` changes `src/` for the final redeploy and is not
+deployed. Base Sepolia's and Unichain Sepolia's Blockscout pick the Sourcify match up and show
 each contract as fully verified.
 
 | Chain | Contract | Address | Verifier | Status |

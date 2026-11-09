@@ -1,0 +1,158 @@
+# Mutation check of the demo API's acceptance rules and of the checker
+# First run 09.11.2026 before commit 0fe2811 (the table in live/W2_DEMO_2026-11-09.md);
+# re-run 09.11.2026 16:05 UTC on main (272db8f + the public-prep doc commit) with the same patches.
+# Method: copy demo/ + script/evm_rpc.py (and script/checker.py, test_checker.py, deployments/latest.json)
+# to a scratch dir, apply one patch with 'patch -p1', run the offline tests there. The repo itself is never edited.
+# A mutant is killed when the test file exits non-zero.
+
+## demo/test_api.py
+control                      exit 0  OK  failing: 
+T_no_transfer_check          exit 1  FAILED (failures=7)  failing: test_paid_log_without_any_token_transfer_is_rejected test_the_transfer_must_come_after_the_paid_log test_transfer_from_a_fake_token_is_rejected test_less_more_or_mismatched test_wrong_payee_in_the_event_or_the_transfer test_transfer_from_another_address_is_rejected test_transfer_from_another_registered_wallet_is_rejected 
+F_transfer_from_not_checked  exit 1  FAILED (failures=2)  failing: test_transfer_from_another_address_is_rejected test_transfer_from_another_registered_wallet_is_rejected 
+R_no_registry_check          exit 1  FAILED (failures=2)  failing: test_fake_paid_from_another_contract_with_real_tokens_is_rejected test_a_real_wallet_that_is_not_registered_is_rejected 
+U_no_used_set                exit 1  FAILED (failures=2)  failing: test_used_callid_is_rejected test_pay_then_replay_then_restart 
+A_no_amount_check            exit 1  FAILED (failures=1)  failing: test_less_more_or_mismatched 
+K_no_claim_check             exit 1  FAILED (failures=1)  failing: test_an_onlooker_without_the_claim_cannot_redeem_the_agents_payment 
+
+## script/test_checker.py
+control                            exit 0  OK  failing: 
+C1_vault_returns_counted_as_spent  exit 1  FAILED (failures=2)  failing: test_spent_excludes_returns_to_the_own_vault test_check_day_over_two_chains 
+C2_day_range_one_block_too_far     exit 1  FAILED (failures=1)  failing: test_check_day_over_two_chains 
+C3_range_refusal_drops_the_chunk   exit 1  FAILED (failures=3)  failing: test_check_day_over_two_chains test_chunks_split_and_retry_until_every_log_is_found test_cursor_reads_only_new_blocks_and_keeps_the_unsettled_tail_out 
+
+## Patches (apply with: patch -p1 -d <copy> < this hunk)
+
+### T_no_transfer_check
+diff -ru -x cache -x __pycache__ control/demo/api.py T_no_transfer_check/demo/api.py
+--- control/demo/api.py	2026-11-09 04:11:28
++++ T_no_transfer_check/demo/api.py	2026-11-09 04:11:29
+@@ -125,7 +125,7 @@
+         if E.words(p["data"])[0] != quote["amount"]:
+             why = "Paid amount differs from the quoted price"
+             continue
+-        # the real token movement: the first budget-token Transfer after this Paid log
++        return "paid", {"wallet": w, "amount": quote["amount"], "tx": None, "block": 0}  # MUTANT
+         idx = int(p.get("logIndex", "0x0"), 16)
+         nxt = next((lg for lg in logs if int(lg.get("logIndex", "0x0"), 16) > idx and _lower(lg["address"]) == token
+                     and (lg.get("topics") or [""])[0].lower() == E.TOPIC_TRANSFER), None)
+
+### F_transfer_from_not_checked
+diff -ru -x cache -x __pycache__ control/demo/api.py F_transfer_from_not_checked/demo/api.py
+--- control/demo/api.py	2026-11-09 04:11:28
++++ F_transfer_from_not_checked/demo/api.py	2026-11-09 04:11:29
+@@ -133,7 +133,7 @@
+             why = "no token Transfer follows the Paid event"
+             continue
+         t = nxt["topics"]
+-        if len(t) < 3 or E.topic_addr(t[1]) != w:
++        if len(t) < 3:
+             why = "token Transfer is not from the paying wallet"
+             continue
+         if E.topic_addr(t[2]) != _lower(quote["payee"]):
+
+### R_no_registry_check
+diff -ru -x cache -x __pycache__ control/demo/api.py R_no_registry_check/demo/api.py
+--- control/demo/api.py	2026-11-09 04:11:28
++++ R_no_registry_check/demo/api.py	2026-11-09 04:11:29
+@@ -100,7 +100,7 @@
+         return len(t) >= 2 and _lower(t[0]) == topic and _lower(t[1]) == cid
+ 
+     paid_any = [lg for lg in logs if is_ev(lg, E.TOPIC_PAID)]
+-    paid = [lg for lg in paid_any if _lower(lg["address"]) in wallets]
++    paid = paid_any
+     if not paid:
+         refused = [lg for lg in logs if is_ev(lg, E.TOPIC_REFUSED) and _lower(lg["address"]) in wallets]
+         if refused:
+
+### U_no_used_set
+diff -ru -x cache -x __pycache__ control/demo/api.py U_no_used_set/demo/api.py
+--- control/demo/api.py	2026-11-09 04:11:28
++++ U_no_used_set/demo/api.py	2026-11-09 04:11:29
+@@ -80,7 +80,7 @@
+     cid = _lower(call_id)
+     if quote is None:
+         return "rejected", "unknown callId: not issued by this API"
+-    if cid in used:
++    if False:
+         return "rejected", "callId already used (replay)"
+     if now > quote["expiresAt"]:
+         return "rejected", "quote expired"
+
+### A_no_amount_check
+diff -ru -x cache -x __pycache__ control/demo/api.py A_no_amount_check/demo/api.py
+--- control/demo/api.py	2026-11-09 04:11:28
++++ A_no_amount_check/demo/api.py	2026-11-09 04:11:29
+@@ -122,7 +122,7 @@
+         if E.topic_addr(p["topics"][2]) != _lower(quote["payee"]):
+             why = "Paid to the wrong payee"
+             continue
+-        if E.words(p["data"])[0] != quote["amount"]:
++        if False:
+             why = "Paid amount differs from the quoted price"
+             continue
+         # the real token movement: the first budget-token Transfer after this Paid log
+@@ -139,7 +139,7 @@
+         if E.topic_addr(t[2]) != _lower(quote["payee"]):
+             why = "token Transfer goes to another address than the payee"
+             continue
+-        if E.words(nxt["data"])[0] != quote["amount"]:
++        if False:
+             why = "token Transfer amount differs from the quoted price"
+             continue
+         return "paid", {"wallet": w, "amount": quote["amount"], "tx": receipt.get("transactionHash"),
+
+### K_no_claim_check
+diff -ru -x cache -x __pycache__ control/demo/api.py K_no_claim_check/demo/api.py
+--- control/demo/api.py	2026-11-09 04:11:28
++++ K_no_claim_check/demo/api.py	2026-11-09 04:11:29
+@@ -269,7 +269,7 @@
+             q = self.quotes.get(cid)
+             if q is not None and q["resource"] != resource:
+                 return 402, {"error": "payment rejected", "reason": "callId was quoted for another resource"}
+-            if q is not None and cid not in self.used and not hmac.compare_digest(str(claim or ""), q["claim"]):
++            if q is not None and cid not in self.used and False:
+                 return 402, {"error": "payment rejected", "reason": "X-Payment-Claim does not match the quote"}
+             try:
+                 rcpt = rpc.receipt(tx)
+
+### C1_vault_returns_counted_as_spent
+diff -ru -x __pycache__ control/script/checker.py C1_vault_returns_counted_as_spent/script/checker.py
+--- control/script/checker.py	2026-11-09 04:10:12
++++ C1_vault_returns_counted_as_spent/script/checker.py	2026-11-09 04:10:12
+@@ -66,7 +66,7 @@
+         if frm not in res:
+             continue
+         value = E.words(lg["data"])[0]
+-        if vault_of[frm] and to == vault_of[frm]:
++        if False:
+             res[frm]["returned"] += value
+             res[frm]["returns"] += 1
+         else:
+
+### C2_day_range_one_block_too_far
+diff -ru -x __pycache__ control/script/checker.py C2_day_range_one_block_too_far/script/checker.py
+--- control/script/checker.py	2026-11-09 04:10:12
++++ C2_day_range_one_block_too_far/script/checker.py	2026-11-09 04:10:12
+@@ -103,7 +103,7 @@
+         rpc = rpcs[chain_id]
+         head = rpc.head()
+         b0 = rpc.first_block_at_or_after(start, head)
+-        b1 = min(head, rpc.first_block_at_or_after(end, head) - 1)
++        b1 = min(head, rpc.first_block_at_or_after(end, head))
+         partial = rpc.block_ts(head) < end
+         logs = []
+         if b0 <= b1:
+
+### C3_range_refusal_drops_the_chunk
+diff -ru -x __pycache__ control/script/evm_rpc.py C3_range_refusal_drops_the_chunk/script/evm_rpc.py
+--- control/script/evm_rpc.py	2026-11-09 04:10:12
++++ C3_range_refusal_drops_the_chunk/script/evm_rpc.py	2026-11-09 04:10:12
+@@ -242,7 +242,7 @@
+                     if a == b:
+                         raise r
+                     m = (a + b) // 2
+-                    ranges = [(a, m), (m + 1, b)] + ranges
++                    ranges = ranges
+                 else:
+                     logs.extend(r or [])
+         logs.sort(key=lambda l: (int(l["blockNumber"], 16), int(l["logIndex"], 16)))

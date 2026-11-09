@@ -13,10 +13,10 @@ import {CallbackFront} from "./CallbackFront.sol";
 /// front. Fees: reserves deposited with the system contract (`depositTo`) are used first; the
 /// system contract can also collect from this contract's balance with pay(), and anyone can
 /// clear a debt with coverDebt(). Built on reactive-lib-omni v0.1.0 (AbstractReactive: the system
-/// contract is the fixed address 0x8888...8888, `onlySystem`, `pay`, `receive`). Not yet run
-/// against the real system contract.
+/// contract is the fixed address 0x8888...8888, `onlySystem`, `pay`, `receive`). Running on Lasna
+/// since 07.11.2026 (the deployed version is branch main).
 contract PursestringsReactive is BudgetCore, AbstractReactive {
-    /// Cron events are emitted on Lasna by this address (DOCS_BRIEF §2).
+    /// Cron events are emitted on Lasna by this address (Reactive's docs).
     address public constant CRON_SOURCE = 0x0000000000000000000000000000000000fffFfF;
 
     struct Wiring {

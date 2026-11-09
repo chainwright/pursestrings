@@ -238,7 +238,7 @@ contract PursestringsLivenessTest is Test {
 }
 
 /// A long seeded walk with all faults on, printing how often each path was exercised.
-/// Not an invariant by itself; it reports coverage for SPIKE_RESULT.md and re-checks (a)-(c).
+/// Not an invariant by itself; it reports coverage for docs/DESIGN_AND_TESTS.md and re-checks (a)-(c).
 contract PursestringsCoverageWalk is Test {
     function test_coverageWalk() public {
         _walk("walk", 7, vm.envOr("WALK_STEPS", uint256(4000)));

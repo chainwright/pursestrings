@@ -63,7 +63,7 @@ abstract contract BudgetCore {
         /// Start the donor path once the projected unspent covers less than this and the pool
         /// can't give the next top-up (must exceed refillLead + the confirmation wait + 2 Cron periods).
         uint32 reclaimLead;
-        /// The heartbeat while no agent has spent or asked for `idleAfter` (W3, P2-2): a lost STOP
+        /// The heartbeat while no agent has spent or asked for `idleAfter`: a lost STOP
         /// press then costs nothing while it waits, so the beat can be slower. 0 = always
         /// `heartbeat`. Activity (a Short, a LowWater, a meter reading that shows spending) brings
         /// every chain's next beat back within `heartbeat`.

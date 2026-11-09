@@ -13,9 +13,9 @@
 #      a STOP as real local txs (anvil impersonation of the system contract and the proxies),
 #      traced by the live-loop logger. The relay delivers non-answer callbacks (heartbeats) 30 s
 #      after the answers, and the check asserts the logger matched the grant / the epoch acks, not
-#      the latest callback, and the second top-up's own grant, not the first's (W1 gate P0-3).
-#      The STOP is traced twice and must be counted once (P0-4).
-#   4b. script/agent_retry.py (P0-2): the agent keeps asking on Unichain Sepolia until the grant
+#      the latest callback, and the second top-up's own grant, not the first's.
+#      The STOP is traced twice and must be counted once.
+#   4b. script/agent_retry.py: the agent keeps asking on Unichain Sepolia until the grant
 #      lands, then pays; an ask that is never served exits 2.
 #   4c. demo/api.py + demo/agent.py: 402 -> pay -> data; a replay, a fake Paid (backed by real
 #      tokens from a non-wallet) and an onlooker without the quote's claim are refused; an over-allowance call gets amber, is served once the
@@ -94,7 +94,7 @@ sys.exit(0 if ok else 1)' "$@" || { echo "FAILED: logger matching"; exit 1; }
 origin="$(python3 script/dryrun_relay.py topup --answer-back)"
 python3 script/loop_logger.py trace --path topup --chain base --tx "$origin" --timeout-min 0.5 | check_trace 1
 first="$(python3 -c 'import json,sys; print(list(json.loads(open(sys.argv[1]).readlines()[-1])["answers"])[0])' "$LOOPS_FILE")"
-echo "   (P0-3) a second top-up on the same chain right away: the previous loop's grant is inside the"
+echo "   a second top-up on the same chain right away: the previous loop's grant is inside the"
 echo "   logger's search window and must not be taken"
 origin="$(python3 script/dryrun_relay.py topup 5000000 --answer-back)"
 python3 script/loop_logger.py trace --path topup --chain base --tx "$origin" --timeout-min 0.5 | check_trace 1 "$first"
@@ -105,7 +105,7 @@ assert r["links"] == ["origin-tx"], r["links"]
 print("   linked by the origin tx hash in the reactive tx input:", r["links"], "grant", r["grantId"], "> floor", r["floors"]["grantIdAbove"])
 ' "$LOOPS_FILE" || { echo "FAILED: origin-tx link"; exit 1; }
 
-echo "== 4b. agent retry (P0-2, script/agent_retry.py): refused -> keeps asking -> served -> paid"
+echo "== 4b. agent retry (script/agent_retry.py): refused -> keeps asking -> served -> paid"
 export AGENT_LOG=cache/dryrun/agent_retry.jsonl
 : > "$AGENT_LOG"
 python3 script/agent_retry.py --chain unichain --every-sec 3 --timeout-min 3 > cache/dryrun/agent_retry.out 2>&1 &
@@ -199,7 +199,7 @@ import json, sys
 r = json.loads(open(sys.argv[1]).readlines()[-1])
 assert r["links"] == ["origin-tx"] and r["epoch"] >= 1, r
 ' "$LOOPS_FILE" || { echo "FAILED: STOP link/epoch"; exit 1; }
-echo "   (P0-4) the same origin traced twice is counted once:"
+echo "   the same origin traced twice is counted once:"
 python3 script/loop_logger.py trace --path stop --chain unichain --tx "$origin" --timeout-min 0.5 | check_trace 2
 python3 script/loop_logger.py summary | tee cache/dryrun/summary.txt
 grep -q "re-trace(s) dropped" cache/dryrun/summary.txt && grep -q "stop: runs 1, complete 1" cache/dryrun/summary.txt \

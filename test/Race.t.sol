@@ -7,7 +7,7 @@ import {BudgetCoreHarness} from "./harness/BudgetCoreHarness.sol";
 import {SpendWallet} from "../src/SpendWallet.sol";
 import {IWalletEvents} from "../src/interfaces/IPursestrings.sol";
 
-/// The race on camera (IDEA_V3 beat 4): agents on both chains pay in the same second while a
+/// The race on camera: agents on both chains pay in the same second while a
 /// reclaim is in flight, and the day ends "Over $0.00". We never promise exactly $20 spent: what
 /// is spent depends on who held what when the race ran; what is asserted is that nothing went over.
 ///

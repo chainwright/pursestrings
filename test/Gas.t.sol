@@ -387,7 +387,7 @@ contract GasTest is Test {
         l.opCode = 1;
     }
 
-    /// What an idle day is made of (P2-2): an idle Cron tick, a tick that sends a heartbeat, and
+    /// What an idle day is made of: an idle Cron tick, a tick that sends a heartbeat, and
     /// the react for the heartbeat's answer (a Verified that confirms nothing). Logged for the cost
     /// table in live/W3_2026-11-09.md; live, an idle tick measured 93-115k and a beat tick 149-179k.
     function test_gas_idleReacts() public {

@@ -41,14 +41,14 @@ contract MockSystem is ISystemContract {
 
     receive() external payable {}
 
-    /// Reserves deposit (DOCS_BRIEF): accepted and counted, nothing more.
+    /// Reserves deposit (Reactive's docs): accepted and counted, nothing more.
     mapping(address => uint256) public reserves;
 
     function depositTo(address c) external payable {
         reserves[c] += msg.value;
     }
 
-    /// getCallbacks as DOCS_BRIEF describes it: per reactive tx, (block, requesting contract,
+    /// getCallbacks as Reactive's docs describe it: per reactive tx, (block, requesting contract,
     /// index, destination chain id, destination tx hash, error). The dry run's relay records them.
     struct CallbackRecord {
         uint256 blockNumber;

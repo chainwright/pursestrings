@@ -6,7 +6,7 @@ import {BudgetCoreHarness} from "./harness/BudgetCoreHarness.sol";
 import {PursestringsLivenessTest} from "./Pursestrings.invariant.t.sol";
 
 /// Not a pass/fail test: measures how often the liveness model is non-vacuous and how many
-/// refused retry rounds a short chain waits while budget exists (numbers for SPIKE_RESULT.md).
+/// refused retry rounds a short chain waits while budget exists (numbers for docs/DESIGN_AND_TESTS.md).
 contract LivenessStats is Test {
     function test_livenessStats() public {
         uint256 availRetries;

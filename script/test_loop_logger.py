@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Offline tests for script/loop_logger.py's matching (W1 gate P0-3, P0-4). No network, no key.
+"""Offline tests for script/loop_logger.py's matching. No network, no key.
 
     python3 script/test_loop_logger.py
 
 The H12 case from the gate: the Lasna search window opens ~35 s before the origin, so the
-previous loop's GrantSent (or Frozen) on the same chain is in it. Before P0-3 the logger took the
+previous loop's GrantSent (or Frozen) on the same chain is in it. Before this fix the logger took the
 first event passing the path predicate, i.e. the previous loop's.
 """
 import io
