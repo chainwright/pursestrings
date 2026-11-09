@@ -165,7 +165,7 @@ The runner runs the **full suite** for each mutant. "Over cap?" is yes if any fa
 | J2 | core: no backoff handling for epoch resends (only the grant half) | KILLED(1) / KILLED(1) | — | `stopReachesAChainBackFromAnOutage` | no |
 
 Reading the table:
-- **All 39 deliberate rule breaks are caught at the default budget on 2 seeds** (round 5 run: 35 min, exit 0; re-run in round 6 after the move to reactive-lib-omni: exit 0, 35 min, and the over-cap / fuzz / walk status of every row is unchanged).
+- **All 39 deliberate rule breaks are caught at the default budget on 2 seeds** (round 5 run: 35 min, exit 0; re-run in round 6 after the move to reactive-lib-omni: exit 0, 35 min, and the over-cap / fuzz / walk status of every row is unchanged; **re-run on 08.11 on HEAD `ac2c6b2`, after round 7 moved the model's default Cron to 17.74 min: M0 passes on both seeds, all 39 killed on both seeds, the same 12 over cap, exit 0, 44 min**; per-seed kill counts differ from the table by at most one in a few rows).
 - **12 lead to a real over-cap payout:**
   - 6 shown by the fuzz invariant on its own: M1, M2, M3, M5, M6, M12;
   - 2 more by the seeded walk: M7, M8;
