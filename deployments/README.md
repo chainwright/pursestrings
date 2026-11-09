@@ -41,7 +41,7 @@ foundry.toml remappings.txt` is empty), and each on-chain creation input starts 
 the creation bytecode `forge build` produces at HEAD. Settings: solc 0.8.29, optimizer on, 200 runs,
 EVM `cancun`, no via-IR. Constructor arguments were taken from each creation tx's input (the bytes
 after the creation bytecode), not from forge's multi-chain record, whose Unichain arguments are
-mislabeled. This holds on branch `main`; branch `w3-final` changes `src/` for the final redeploy and is not
+mislabeled. This holds on branch `main`; branch `w3-final` changes `src/` for the next version, not the judged deployment, and is not
 deployed. Base Sepolia's and Unichain Sepolia's Blockscout pick the Sourcify match up and show
 each contract as fully verified.
 
