@@ -4,6 +4,8 @@
 
 For people who let AI agents pay for APIs and services on more than one chain and want one hard daily cap and one STOP that contracts enforce, with no server or custodian of ours in between.
 
+**See it:** [pursestrings-dashboard.netlify.app](https://pursestrings-dashboard.netlify.app) replays the real transactions recorded on 9 Nov 2026 (labelled as a replay; hold STOP to watch both chains freeze).
+
 | Live loop (testnet, 09.11.2026) | Origin | Reactive tx on Lasna | Answer on the destination chain | Took |
 |---|---|---|---|---|
 | Top-up: agent refused on Base, budget granted | [Base `0xe762…b163`](https://base-sepolia.blockscout.com/tx/0xe7629c982f59b7f4e7401b7ede1391e2c6f244d181d8911bf95f7ade7deeb163) | [`0x0c12…fe7a`](https://lasna.reactscan.net/tx/0x0c12f2abf867f4f12519ebdfeace2c2357e0ed2f6df093956ac51541cf42fe7a) | [GrantApplied, Base `0x923a…f62c`](https://base-sepolia.blockscout.com/tx/0x923a57c6b9edc7df74c9144e6698dc6fd6535d029c875d383a937b9f2360f62c) | 1 s |
