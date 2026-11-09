@@ -78,6 +78,10 @@ MUTANTS = [
      "src/BudgetCore.sol", "        uint8 limit = answer ? 0 : ALIVE_CAP;", "        uint8 limit = 0;"),
     ("W14", "core: no backoff reset when a chain shows it is alive",
      "src/BudgetCore.sol", "        uint8 limit = answer ? 0 : ALIVE_CAP;", "        uint8 limit = 255;"),
+    # W3 (09.11, branch w3-final): the final-redeploy changes.
+    ("V1", "wallet: flush() doesn't sweep past days (owner can't recover yesterday while paused)",
+     "src/SpendWallet.sol", "    function flush() external {\n        _sweep();\n        _flush();",
+     "    function flush() external {\n        _flush();"),
 ]
 
 

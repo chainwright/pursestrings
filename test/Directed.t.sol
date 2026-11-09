@@ -479,6 +479,43 @@ contract DirectedTest is Test {
         _assertSafe();
     }
 
+    /// W1 gate P1-8: the owner (or anyone) recovers yesterday's leftover while the coordinator is
+    /// down, with no agent pay and no coordinator callback: flush() sweeps past days first, then
+    /// returns the tokens to the vault. Nothing reaches the coordinator and nothing is spendable.
+    function test_flushSweepsYesterdaysLeftoverWithoutPayOrCallback() public {
+        _short(0, 10e6);
+        h.settleFor(2);
+        uint64 d0 = _today();
+        assertTrue(h.payExact(0, 3e6), "setup: spend $3 of $10");
+        h.deliverAll();
+        assertEq(h.queueLength(), 0, "setup: nothing in flight");
+        uint256 nextIdBefore = core.nextId();
+        vm.warp(block.timestamp + 1 days); // the coordinator is paused: no tick, no react
+        assertEq(_w(0).unspentOf(d0), 7e6, "setup: yesterday's $7 still a bucket");
+        assertEq(h.tokens(0).balanceOf(address(_w(0))), 7e6, "setup: the $7 sits in the wallet");
+        vm.recordLogs();
+        vm.prank(address(0x5714)); // not the agent, not the bridge
+        _w(0).flush();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        (uint128 allowance,) = _w(0).buckets(d0);
+        assertEq(allowance, 0, "yesterday's bucket was not swept");
+        assertEq(_w(0).liveUnspent(), 0, "allowance left after the sweep");
+        assertEq(_w(0).stranded(), 0, "the leftover is still owed to the vault");
+        assertEq(h.tokens(0).balanceOf(address(_w(0))), 0, "the leftover is still in the wallet");
+        assertEq(
+            h.tokens(0).balanceOf(address(h.vaults(0))) + h.tokens(0).outflowTotal(address(_w(0))),
+            100 * h.CAP(),
+            "vault + paid != funded"
+        );
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].emitter != address(_w(0))) continue;
+            assertEq(logs[i].topics[0], IWalletEvents.Swept.selector, "flush emitted a coordinator event");
+        }
+        assertEq(core.nextId(), nextIdBefore, "the coordinator was involved");
+        assertEq(h.queueLength(), 0, "a message was queued");
+        assertFalse(h.payExact(0, 1e6), "the swept leftover is still spendable");
+    }
+
     // ------------------------------------------- coordinator paused in debt (W1 gate P1-9)
 
     /// Drop every origin log queued for the coordinator: while it is in debt it gets no react(),

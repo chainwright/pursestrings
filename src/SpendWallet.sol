@@ -163,8 +163,11 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
         _echoStop();
     }
 
-    /// Anyone may retry returning stranded tokens to the vault.
+    /// Anyone may return what is owed to the vault: past days' leftovers are swept first, so the
+    /// owner can recover yesterday's allowance even while the coordinator is paused (no pay, no
+    /// callback needed). Then stranded tokens are sent back, best-effort.
     function flush() external {
+        _sweep();
         _flush();
     }
 
