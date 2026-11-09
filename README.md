@@ -4,18 +4,25 @@ One daily allowance for your agents, on every chain. Money moves only locally
 (vault to wallet on the same chain); only the permission moves across chains,
 coordinated by a reactive contract on Reactive Network (Lasna).
 
-Status: week-1 protocol spike. No deployment yet. See `SPIKE_RESULT.md` for what passed,
-the mutants, what is still not covered, and what the spike changed in the design.
+Status: week 1. Deployed on testnets on 07.11.2026 (coordinator on Lasna, wallet + vault + front
+on Base Sepolia and on Unichain Sepolia; the console on Base Sepolia). Addresses and creation
+hashes: `deployments/README.md`. The live smoke test passed: one top-up loop and one STOP, each
+answered on-chain 2 s after its origin (`live/LIVE_RUN_2026-11-07.md`). The coordinator ran out
+of its 3-lREACT reserve after ≈ 22 h and is paused until it is funded again (a paused coordinator
+is not charged). `SPIKE_RESULT.md` covers the protocol spike: what passed, the mutants, what is
+still not covered, and what the spike changed in the design.
 
 ```
 forge build
 forge test             # invariants, directed scenarios, liveness, production timing, gas, Reactive glue (~30-45 s)
 script/mutants.sh      # full suite x 2 seeds per mutant: each must fail, the real contracts must pass (30-60 min, machine-dependent)
-script/dryrun.sh       # the whole testnet deployment + one loop, rehearsed on three local anvils (no network)
+script/dryrun.sh       # the whole testnet deployment + the loops, rehearsed on three local anvils (no network)
+python3 script/test_loop_logger.py   # offline tests of the live-loop logger's matching
 ```
 
-Built on reactive-lib-omni v0.1.0. The live testnet loop (deploy, fund, 20 loops per path, logger) is prepared but not
-run: see `LIVE_LOOP.md` for the exact commands and their costs.
+Built on reactive-lib-omni v0.1.0. `LIVE_LOOP.md` has the exact commands: the smoke test as it
+was run, and the compact series still to run (10 top-up, 3 donor, 5 STOP loops, with an agent
+that keeps asking on the donor path), with measured costs.
 
 Tested by fuzz + mutation (not proven), against our own model of the network. MIT licensed.
 
@@ -31,10 +38,13 @@ What the tests do and don't show:
   until Reactive confirms it delivers only finalized logs.
 - STOP latency after a lost STOP log depends on the Cron period (1000 Lasna blocks): one
   heartbeat cycle plus delivery, 51-59 min in our model for a Cron of 17-19.5 min (53 at the
-  17.74 min derived from Lasna's block time, measured at 1.064 s over 10,000 blocks on 06.11).
-  Real Cron ticks are still to be observed on the live smoke test.
-- Nothing has run on Reactive yet: all latency, gas and fee figures are Foundry measurements or
-  estimates.
+  17.74 min derived from Lasna's block time). The observed Cron1000 period is 17.66 min (mean of
+  173 live intervals, 1,050-1,074 s), so the 17.74-min model figure stands within 0.5 %. A STOP
+  whose log is delivered (the normal case) took 2 s live.
+- Live so far (07.11): 76 of 76 Cron ticks received while funded; one top-up loop and one STOP,
+  2 s each; the USDC grant callback used 245,809 gas of its 700k limit. Not yet live: a
+  successful agent payment, the donor path, more than one loop per path. Every other latency
+  figure is from Foundry and our network model.
 
 ## Fees and funding (for the live loop)
 
@@ -45,13 +55,18 @@ What the tests do and don't show:
   gets no `react()` calls, so STOP would stop propagating: keep it funded.
   Cost drivers: Cron1000 (~75-85 ticks a day), the heartbeat (a re-read to each chain every
   ~51-56 min when idle, plus the `react()` for its answer), and one `react()` per wallet event.
-  A few lREACT a day (Cron alone up to ~4.6 if every tick were the heaviest measured, heartbeat
-  answers on top), from the documented fee formula and our Foundry gas figures; **unmeasured**.
+  **Measured: ≈ 2.9 lREACT a day idle at 100 gwei** (≈ 5 at 175): the 3-lREACT deposit lasted
+  ≈ 22 h with the smoke test inside. An idle tick uses 93-115k gas (≈ 0.02 lREACT); the heaviest
+  live react was 507,771 gas.
   A front that stays dead while its agent keeps asking costs about one cancel per 40 min.
 - **Callback front on each destination chain:** fund with
   `cast send $CALLBACK_PROXY "depositTo(address)" $FRONT --value <ETH>` and/or send ETH to the
   front; the proxy collects with `pay()`, `coverDebt()` works the same way, and the owner can
   take the float back with `withdrawFees()`. Callback fees are billed on gas used (per the docs;
   to confirm on the live loop), so the generous gas limits in `src/reactive/TestnetConfig.sol`
-  should cost nothing unless used. Per-callback costs on each chain are **unmeasured**.
+  should cost nothing unless used. **Measured:** < 1e-6 ETH per callback on Base Sepolia (the
+  front's 0.002 ETH reserve was 0.0019739 after ~35 callbacks).
 - Fees never come out of the budget token.
+
+Licences: this repo is MIT. `forge-std` (MIT/Apache-2.0) and `reactive-lib-omni` are git
+submodules, not vendored; `reactive-lib-omni` carries `SPDX: UNLICENSED` and has no LICENSE file.

@@ -308,7 +308,7 @@ donor 2000000 && sleep 60 && donor 1000000 && sleep 60 && donor 1000000
 ```
 
 - Each origin is a paid LowWater on B (B 2 → 0, then 1 → 0): the pool is empty, so the coordinator asks U for a reclaim of $2. U's unspent goes 8 → 6 → 4 → 2.
-- `agent_retry.py` ends with `served` then `paid` (B left $1) and exit 0. **Exit 2** (not served within 80 min): stop the donor phase, `snap`, check the reserves and debt, and whether U is still above its floor; don't start the next donor loop.
+- `agent_retry.py` ends with `served` then `paid` (B left $1) and exit 0. **Exit 2** (not served within 80 min): stop the donor phase, `snap`, check the reserves and debt, and whether U is still above its floor; don't start the next donor loop. **Exit 3** (served, but the final pay refused): the same, plus read the wallet's Refused reason in that receipt.
 - Expected latency **30–36 min with the agent retrying every 5 min** (model bound 1 h 40). Report it with that wording.
 - Record for each loop (the trace JSON has them): the ReclaimSent reactive tx and its `applyReclaim` callback on U (Reclaimed), the `verify` callback's landing time, the Credited reactive tx, and GrantApplied on B. That splits the 30-min wait from the rest.
 - `snap` after D3; reserves ≥ 1.5 before Phase 4, or deposit 1.5 now (if not used yet).
@@ -346,7 +346,7 @@ snap | tee live/series_2026-11-09_close.txt
 python3 script/loop_logger.py paid-sum --chain base --from-block $B0
 python3 script/loop_logger.py paid-sum --chain unichain --from-block $U0
 ```
-- The checker: today's Paid sum over both chains must be ≤ $20 (expected: B $10 in Phase 2 + $3 in Phase 3 = $13; U $0).
+- The checker: today's Paid sum over both chains must be ≤ $20 (expected: B $10 in Phase 2 + $7 in Phase 3 (origins 2 + 1 + 1, final pays 1 + 1 + 1) = $17; U $0). Base backing: $18 granted = $17 paid + $1 left.
 - Conservation per chain: vault + wallet = funded − Σ paid.
 - The real charged cost: reserves at Phase 0 / each boundary / close, against the formula fees the logger records.
 - Write `live/LIVE_RUN_2026-11-09.md`, then commit `broadcast/`, the series files and the run note.
