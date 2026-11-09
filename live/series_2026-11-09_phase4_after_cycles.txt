@@ -1,0 +1,6 @@
+08:29:40Z gas 100000000000 day 20766
+ RC reserves 1282973600000000000 [1.282e18] debt 0
+ RC cap 20000000 [2e7] pool 0 epoch 12 frozen false
+ deployer 5.651870039999861326 lREACT
+ B unspent 0 vault 2000000 [2e6] wallet 0 front reserves 1947721920164295 [1.947e15]
+ U unspent 0 vault 10000000 [1e7] wallet 0 front reserves 1987600063550000 [1.987e15]

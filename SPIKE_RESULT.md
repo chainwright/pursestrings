@@ -14,7 +14,13 @@ What this spike is not: a deployment. The spike itself used no keys and sent no 
 > - **One top-up loop and one STOP, each answered on-chain 2 s after its origin.** The reactive tx carries the origin tx hash, and `getCallbacks` links it to the answering destination tx (`live/loops.jsonl`).
 > - Gas: idle tick 93–115k; heaviest live react **507,771** (the pre-grant tick; Foundry 484–510k, asserted ≤ 600k, Reactive's cap 900k); Short react with a grant 349,065; STOP react 272,350; USDC grant callback **245,809** for the whole destination tx (limit 700k).
 > - Cost: ≈ 2.9 lREACT a day idle at 100 gwei; callbacks < 1e-6 ETH each on the L2s.
-> - Not live yet: a successful agent payment, the donor path, more than one loop per path, the lost-STOP heartbeat path. Those come from the series in `LIVE_LOOP.md` §6.
+> - **The compact series, 09.11 UTC** (`live/SERIES_2026-11-09.md`, `LIVE_LOOP.md` §6, at 100 gwei):
+>   - top-up: 10/10 complete, median **2 s**, p95 3 s;
+>   - donor: 3/3 complete, median **30.4 min** (max 31.2) with the agent retrying every 5 min. The reclaim on the donor chain lands in 2–3 s, the grant right after the 30-min L2 wait;
+>   - STOP: 5/5, both chains frozen, median **2 s**, p95 3 s; every unstop acked on both chains;
+>   - payments: 12 successful agent payments, $17 in all, against the $20 cap. The checker sums `Paid` per chain, and vault + wallet = funded − paid on both chains;
+>   - cost: 4.51 lREACT charged in ≈ 4 h. The 30-min re-reads after the five STOP cycles took ≈ 1.3 of that, and the coordinator paused again at the end. Cron resumed by itself after `depositTo`.
+> - Not live yet: the lost-STOP heartbeat path.
 
 How to rerun: `forge build && forge test` (default profile, about 30–45 s), then `script/mutants.sh` (30–60 min depending on the machine). For the larger coverage walk: `WALK_STEPS=40000 forge test --match-contract PursestringsCoverageWalk -vv`.
 
@@ -73,7 +79,7 @@ Model time is compressed: confirmation waits are 60/90/180 s on the three chains
   - **At an 18.5-min Cron** (rounds 5–6): worst 13 rounds on 0–1,599 and on 10,000–11,599, and **16 rounds (80 min)** on 30,000–31,599, so 16 over 4,800 seeds.
   - **At the measured 17.74-min Cron** (round 7, the default now): worst **13 rounds (65 min)** on seeds 0–1,599 (963 never waited, 3 waited 13).
   - Bound 20 (100 min). `LIVENESS_SEEDS=1600 forge test --match-test test_livenessStatsProductionTiming -vv` reproduces a range. `test_twoShortChainsServedInOneConfirmationCycle` pins the fix: 65 min at 17.74 and 18.5, 60 at 17; the old sizing took 95.
-  - **As a product number:** the donor path at production timing takes **up to ~1h20** in this model (bound 1h40). It is still our model, not a measurement on Reactive.
+  - **As a product number:** the donor path at production timing takes **up to ~1h20** in this model (bound 1h40). It is still our model. Live on Reactive (09.11, n = 3, one donor, agent retrying every 5 min): 30.4 min median, 31.2 max.
 - **Production timing, `test/ProductionTiming.t.sol`:**
   - **A lost STOP press with the pressing chain's agent idle.** The time until the coordinator and every chain are frozen depends on the Cron period P, because the pressing chain's next heartbeat re-read is what carries the press back. Since round 5 the coordinator's own re-reads re-announce the press without the wallet's 5-min rate limit (R4-1). Worst over every pressing chain × 61 start offsets (1-min steps), no agent activity anywhere, measured at 1-min resolution; asserted ≤ one beat cycle (ceil(40 min / P) × P) + 2 min:
 
@@ -242,7 +248,7 @@ The production adapter's routing is covered by one scripted end-to-end run (`tes
 
 - **One clock.** Wallets bucket by their own `block.timestamp` and the core by Lasna's, but the model shares one clock. Skew near midnight isn't modelled.
 - **Reorgs** are modelled for callback transactions only. Not modelled: reorgs of agent `pay`, `pressStop` or console transactions. Reorgs deeper than the wait are outside the model. `AssumptionTest` shows on purpose that such a reorg makes the coordinator over-credit.
-- **The STOP bound** is "within 3h20m after the network heals" in model time. That covers the longest retry backoff; usually it is one round. With a lost press and an idle pressing agent, production relies on the heartbeat. That takes one beat cycle plus delivery, so it depends on the Cron period: 51 min at a 17-min Cron, **53 at the measured 17.74 min**, 59 at 19.5 min in our model. The Cron period, observed live since, is 17.66 min (the model's 17.74 from block time is 0.5 % off). The lost-STOP latency itself is not measured on Reactive; until the heartbeat brings the press back, the other chains can spend what they hold. A delivered STOP took 2 s live (one press, 07.11); the STOP window with n = 5 comes from the series in `LIVE_LOOP.md` §6.
+- **The STOP bound** is "within 3h20m after the network heals" in model time. That covers the longest retry backoff; usually it is one round. With a lost press and an idle pressing agent, production relies on the heartbeat. That takes one beat cycle plus delivery, so it depends on the Cron period: 51 min at a 17-min Cron, **53 at the measured 17.74 min**, 59 at 19.5 min in our model. The Cron period, observed live since, is 17.66 min (the model's 17.74 from block time is 0.5 % off). The lost-STOP latency itself is not measured on Reactive; until the heartbeat brings the press back, the other chains can spend what they hold. A delivered STOP took 2 s live (one press, 07.11). In the 09.11 series, n = 5, it took a median of 2 s (p95 3 s) to freeze both chains.
 - **A chain that is unreachable during a STOP** (its callbacks lost: front in debt, proxy down) freezes by its next heartbeat after it returns: a few minutes if its agent is active then, up to about one heartbeat cycle (~55 min at the measured 17.74-min Cron) if it is idle. Until then it can spend what it already held, never past the day's cap. A runaway agent there spends all of it first: $9 in 9 min in the engineer's probe. For the demo and UI: "a chain that was offline during STOP freezes within about an hour of coming back; until then it can spend only what it already held."
 - **(s) is one-directional.** It checks only that a STOP holds; it does not check that an unstop takes effect. A press logged before an unstop but delivered after it re-freezes the system. That is fail-safe, but the owner sees an unstop that "didn't take" and must click again.
 - **Liveness numbers are from our model.** With compressed waits the bound is 6 rounds. With production timing it is 20 rounds (100 min). The worst seen was 16 rounds (80 min), on a single seed (31,571), over 12,800 seeds at both the 17-min and the 18.5-min Cron (the hound's reruns). Over our 3,200 seeds the worst was 13, and 13 again over 1,600 seeds at the measured 17.74-min Cron; the round-5 engineer saw 10 on 3,200 more. Neither is measured on Reactive.
@@ -275,8 +281,9 @@ The production adapter's routing is covered by one scripted end-to-end run (`tes
    - What does a callback request cost inside `react()`?
 2. ~~Swap the mirror for `reactive-lib-omni` and check the LogRecord field order~~: done (round 6, field order identical). Fund the RC and the fronts, and check the Cron subscription with `rnk_getFilters`: commands in `LIVE_LOOP.md`.
 3. ~~Deploy one wallet, vault and front on each L2 and the RC on Lasna~~: **done 07.11** (`deployments/README.md`); the coordinator CREATE cost 0.505 lREACT (4.59 M gas at 110 gwei). Staged smoke test A–E passed (`LIVE_LOOP.md` §5, `live/LIVE_RUN_2026-11-07.md`).
-   - Still to run: the compact series in `LIVE_LOOP.md` §6, logging origin tx → reactive tx → `getCallbacks` → destination tx (`script/loop_logger.py`), with latency and cost, separately for:
-   - the reserve top-up path, n = 10 (target median ≤ 6 s, aiming for 3; 2 s on the one live loop);
-   - the donor path, n = 3, which waits the full confirmation wait (30 min on the L2s) plus the re-read, with the agent retrying every 5 min (`script/agent_retry.py`). The "≤ 6 s" claim must not be applied to it;
-   - STOP from each chain to $0.00 on the others, n = 5: measured median/p95. Only then may a STOP window appear in the video.
+   - **Done 09.11:** the compact series in `LIVE_LOOP.md` §6 (`live/SERIES_2026-11-09.md`), logging origin tx → reactive tx → `getCallbacks` → destination tx (`script/loop_logger.py`), with latency and cost, separately for:
+   - the reserve top-up path, n = 10: median **2 s**, p95 3 s (target ≤ 6 s; met);
+   - the donor path, n = 3, which waits the full confirmation wait (30 min on the L2s) plus the re-read, with the agent retrying every 5 min (`script/agent_retry.py`): median **30.4 min**, max 31.2. The "≤ 6 s" claim must not be applied to it;
+   - STOP from each chain to $0.00 on the others, n = 5: median **2 s**, p95 3 s.
+   - The other 10 top-up runs the gate asks for come from the final deployment.
 4. ~~Measure real callback gas with USDC~~: 245,809 gas for the grant callback against the 700k limit. Re-derive the limits in `TestnetConfig` only if the series shows billing on the limit rather than on gas used (W1 gate P2-3); the deployed limits are immutable until the final redeploy.

@@ -1,0 +1,25 @@
+{"t": 1794205850, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0xd336bd38bdbe973a4dfa6e23496da6f0aaa572bb54d3715df0e79b1ed28dbfba", "events": ["Short", "Refused"], "asks": 1}
+{"t": 1794206160, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0x0d66aa6878a41baee4eeb40021a6f8c3976f0b2aedd18a6457db6daec10f58e9", "events": ["Short", "Refused"], "asks": 2}
+{"t": 1794206473, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0xe7ef43c71fa709b803605b6e003b9c717953e99a4c3102264e7e753714402ffd", "events": ["Short", "Refused"], "asks": 3}
+{"t": 1794206785, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0x7412ec9e3ea5067e20b2a17821137fd2f0000a178cb08de911f3e4ee8d37c320", "events": ["Short", "Refused"], "asks": 4}
+{"t": 1794207095, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0x7b81dd537c9fb8c32bb4cc7229d110d9709f2d38d92bd7d054f7b5b2f5b16fb5", "events": ["Short", "Refused"], "asks": 5}
+{"t": 1794207406, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0x64c0f7652c65a7d61d491e6eeaa999711ea405e80d5da2253f156fcf0743d5c1", "events": ["Short", "Refused"], "asks": 6}
+{"t": 1794207719, "chain": "base", "amount": 1000000, "step": "ask failed", "error": "forge pay failed:\n\nTransactions saved to: /Users/mini/agents/sora/hackathons/reactive_2026/pursestrings/broadcast/Loop.s.sol/84532/pay-latest.json\n\nSensitive values saved to: /Users/mini/agents/sora/hackathons/reactive_2026/pursestrings/cache/Loop.s.sol/84532/pay-latest.json\n\nError: Transaction Fail"}
+{"t": 1794207750, "chain": "base", "amount": 1000000, "step": "served", "unspent": 2000000, "asks": 6, "waitedSec": 1906}
+{"t": 1794207756, "chain": "base", "amount": 1000000, "step": "paid", "tx": "0x1a2585149be0759c20562d433d3fe94805c96dfa82e3119569b830f421f0d38f", "events": ["Paid"], "asks": 6, "waitedSec": 1912}
+{"t": 1794208019, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0xb088be5085469d94d00414203edfe2780f1a744b1e8fb7e903774399b900d79b", "events": ["Short", "Refused"], "asks": 1}
+{"t": 1794208330, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0xfb5b60a80ad34ff6cbc9d7c8bbbffb3736ac7f20f4f1f44a671eed1420f6cee3", "events": ["Short", "Refused"], "asks": 2}
+{"t": 1794208641, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0x9693f562270554e5288ecea567c916a836bcab0f60b154dac9083ec97521d460", "events": ["Short", "Refused"], "asks": 3}
+{"t": 1794208954, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0x11cc89326cbf206a5f8e71b3326314d2d36a7fbd7ca474ccfad08e748468e208", "events": ["Short", "Refused"], "asks": 4}
+{"t": 1794209266, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0xbea95110f165de6d48a4678398e38e3b017e49c0a11ade64c48e6b9b1fb15545", "events": ["Short", "Refused"], "asks": 5}
+{"t": 1794209575, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0x8a7eab12c98e2dd3539855d71d32d943c8934369acc76065faff4b242276247e", "events": ["Short", "Refused"], "asks": 6}
+{"t": 1794209882, "chain": "base", "amount": 1000000, "step": "served", "unspent": 2000000, "asks": 6, "waitedSec": 1869}
+{"t": 1794209888, "chain": "base", "amount": 1000000, "step": "paid", "tx": "0x6baef963e546cb632c061b0d3a22b27576a4bfd34019aefe4c35c82a06dd854d", "events": ["Paid"], "asks": 6, "waitedSec": 1875}
+{"t": 1794210137, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0xab7e1ef81d8668b60a0cca5d9dcfe4f70ff2c8e1191cee43b7738d12c070f110", "events": ["Short", "Refused"], "asks": 1}
+{"t": 1794210449, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0x78d5bee1a3ca92f133e8c6314f6a39044fd4f4fe8b2acc935334ad603e015e60", "events": ["Short", "Refused"], "asks": 2}
+{"t": 1794210760, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0xc6e4aaa99f5962bda125bc9e1cbea42fef2b6f11c3df540860c30e6330eace8b", "events": ["Short", "Refused"], "asks": 3}
+{"t": 1794211072, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0x3d9c3571ae3edc392e1d470edd80443265c4cc59e060841c84d0a95aa9d38f9e", "events": ["Short", "Refused"], "asks": 4}
+{"t": 1794211383, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0x6605dba93e46a82ca5a5ef2d78972020c1effe661ca23b493782bebea37b8f30", "events": ["Short", "Refused"], "asks": 5}
+{"t": 1794211695, "chain": "base", "amount": 1000000, "step": "ask", "tx": "0x3e912d8c502d8ba774c528857173511fa4945a805e86fe3871ea438293daead7", "events": ["Short", "Refused"], "asks": 6}
+{"t": 1794212000, "chain": "base", "amount": 1000000, "step": "served", "unspent": 2000000, "asks": 6, "waitedSec": 1869}
+{"t": 1794212008, "chain": "base", "amount": 1000000, "step": "paid", "tx": "0xc561c9b888d4130f4a2a13a36f99189dc1f1333bcf73ec9f2c6bb98c43f6f3dd", "events": ["Paid"], "asks": 6, "waitedSec": 1876}

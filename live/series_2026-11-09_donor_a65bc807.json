@@ -1,0 +1,22 @@
+{
+ "path": "donor",
+ "chain": "base",
+ "complete": true,
+ "latencySec": 1824,
+ "answers": {
+  "GrantApplied#19": {
+   "destTx": "0x7498a5840b527f3329d9e1b56050032135989b7e567872ea99daaac5698ebe60",
+   "ts": 1794211953
+  }
+ },
+ "failures": [],
+ "reactiveTxs": [
+  "0x4fef3320912a3bd57627ca180908c85afc91ded61e0171c713591f51afb2e33e",
+  "0x2053774518ee1bf3112953014d18fe0271467e25a91419216347dcedf7291fdf",
+  "0x2053774518ee1bf3112953014d18fe0271467e25a91419216347dcedf7291fdf"
+ ],
+ "otherCallbacks": [
+  "0xd0ebca72923de17abcbea762094c2214253f03ed6514b3ead12ff4212911c39d",
+  "0x7498a5840b527f3329d9e1b56050032135989b7e567872ea99daaac5698ebe60"
+ ]
+}
