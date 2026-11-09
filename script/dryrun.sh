@@ -15,6 +15,8 @@
 #      after the answers, and the check asserts the logger matched the grant / the epoch acks, not
 #      the latest callback, and the second top-up's own grant, not the first's (W1 gate P0-3).
 #      The STOP is traced twice and must be counted once (P0-4).
+#   4b. script/agent_retry.py (P0-2): the agent keeps asking on Unichain Sepolia until the grant
+#      lands, then pays; an ask that is never served exits 2.
 #   5. script/Loop.s.sol: the live-loop driver (pay, setCap, fundReserves, fundVault, stop)
 # The deployer key is anvil's public development key, derived into an environment variable and
 # never printed. Broadcast logs go to cache/dryrun/ and addresses to deployments/dryrun.json
@@ -99,6 +101,33 @@ r = json.loads(open(sys.argv[1]).readlines()[-1])
 assert r["links"] == ["origin-tx"], r["links"]
 print("   linked by the origin tx hash in the reactive tx input:", r["links"], "grant", r["grantId"], "> floor", r["floors"]["grantIdAbove"])
 ' "$LOOPS_FILE" || { echo "FAILED: origin-tx link"; exit 1; }
+
+echo "== 4b. agent retry (P0-2, script/agent_retry.py): refused -> keeps asking -> served -> paid"
+export AGENT_LOG=cache/dryrun/agent_retry.jsonl
+: > "$AGENT_LOG"
+python3 script/agent_retry.py --chain unichain --every-sec 3 --timeout-min 3 > cache/dryrun/agent_retry.out 2>&1 &
+apid=$!; pids+=($apid)
+for _ in $(seq 1 180); do [ "$(grep -c '"step": "ask"' "$AGENT_LOG")" -ge 2 ] && break; sleep 1; done
+short_tx="$(python3 -c '
+import json, sys
+print(next(r["tx"] for r in map(json.loads, open(sys.argv[1])) if r.get("step") == "ask" and "Short" in r["events"]))
+' "$AGENT_LOG")" || { tail -5 cache/dryrun/agent_retry.out; echo "FAILED: no refused ask with Short"; exit 1; }
+echo "   asks so far: $(grep -c '"step": "ask"' "$AGENT_LOG") (the first with Short); the grant lands now"
+python3 script/dryrun_relay.py deliver unichain "$short_tx" >/dev/null
+if ! wait "$apid"; then tail -5 cache/dryrun/agent_retry.out; echo "FAILED: agent retry did not finish paid"; exit 1; fi
+python3 -c '
+import json, sys
+rs = [json.loads(l) for l in open(sys.argv[1])]
+steps = [r["step"] for r in rs]
+assert steps[-2:] == ["served", "paid"] and steps.count("ask") >= 2 and "Paid" in rs[-1]["events"], steps
+print("   steps", steps, "-> paid", rs[-1]["tx"][:12] + "…")
+' "$AGENT_LOG" || { echo "FAILED: agent retry log"; exit 1; }
+set +e
+python3 script/agent_retry.py --chain unichain --amount 9000000 --every-sec 1 --timeout-min 0.1 > cache/dryrun/agent_timeout.out 2>&1
+rc=$?
+set -e
+if [ "$rc" != 2 ]; then tail -5 cache/dryrun/agent_timeout.out; echo "FAILED: unserved ask must exit 2 (got $rc)"; exit 1; fi
+echo "   not served before its timeout: exit 2, as the run book expects"
 
 origin="$(python3 script/dryrun_relay.py stop)"
 python3 script/loop_logger.py trace --path stop --chain unichain --tx "$origin" --timeout-min 0.5 | check_trace 2
