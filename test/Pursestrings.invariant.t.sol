@@ -19,7 +19,7 @@ contract PursestringsInvariantTest is StdInvariant, Test {
     function setUp() public {
         vm.warp(1_800_000_000); // a fixed date; 12:00 UTC-ish within its day
         uint256 m = vm.envOr("MUTANT", uint256(0));
-        h = new NetworkHandler(m, true, false, true);
+        h = new NetworkHandler(m, true, false, 1);
         core = h.core();
         bytes4[] memory sels = new bytes4[](10);
         sels[0] = NetworkHandler.pay.selector;
@@ -165,7 +165,7 @@ contract PursestringsLivenessTest is Test {
         returns (uint256 maxStreak)
     {
         vm.warp(1_800_000_000 - (1_800_000_000 % 1 days) + 6 hours); // 06:00, far from midnight
-        NetworkHandler h = new NetworkHandler(0, false, production, true);
+        NetworkHandler h = new NetworkHandler(0, false, production, 1);
         for (uint256 i; i < 60; i++) {
             uint256 s = uint256(keccak256(abi.encode(seed, i)));
             uint256 op = s % 6;
@@ -253,7 +253,7 @@ contract PursestringsCoverageWalk is Test {
 
     function _walk(string memory tag, uint256 ops, uint256 steps) internal {
         vm.warp(1_800_000_000);
-        NetworkHandler h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), true, false, true);
+        NetworkHandler h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), true, false, 1);
         for (uint256 i; i < steps; i++) {
             uint256 s = uint256(keccak256(abi.encode(tag, i)));
             uint256 op = s % ops;

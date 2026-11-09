@@ -55,7 +55,8 @@ MUTANTS = [
      "src/BudgetCore.sol",
      "                        && pending[_key(K_RECLAIM, r.chain, _liveReclaims[i])].kind == 0\n", ""),
     ("W2", "core: heartbeat 3x slower than configured",
-     "src/BudgetCore.sol", "        _beatDue[c] = nowTs + heartbeat;", "        _beatDue[c] = nowTs + 3 * heartbeat;"),
+     "src/BudgetCore.sol", "        _beatDue[c] = nowTs + (_isActive() ? heartbeat : idleHeartbeat);",
+     "        _beatDue[c] = nowTs + 3 * (_isActive() ? heartbeat : idleHeartbeat);"),
     ("W9", "config: production reclaim timeout = wait / 2",
      "src/reactive/TestnetConfig.sol",
      "        p.reclaimTimeout = uint32(wait) + 2 * p.verifyTimeout;",
@@ -114,6 +115,12 @@ MUTANTS = [
      "src/BudgetCore.sol",
      "        if (refillHorizon == 0 || inflight[c] != 0 || _pendingOf[c] != 0 || openReclaim[c][day] != 0) return;",
      "        if (refillHorizon == 0) return;"),
+    ("V11", "core: agent activity never noticed (the idle heartbeat always)",
+     "src/BudgetCore.sol", "        lastActiveAt = nowTs;\n", ""),
+    ("V12", "core: waking from idle doesn't bring the next beats forward",
+     "src/BudgetCore.sol",
+     "                if (_beatDue[c] > nowTs + heartbeat) _beatDue[c] = nowTs + heartbeat;",
+     "                nowTs;"),
 ]
 
 

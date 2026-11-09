@@ -27,7 +27,7 @@ contract ProductionTimingTest is Test {
 
     function _fresh() internal {
         vm.warp(T0);
-        h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false, true, true);
+        h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false, true, 1);
         core = h.core();
     }
 
@@ -50,31 +50,81 @@ contract ProductionTimingTest is Test {
     /// pressing chain and 61 start offsets (1-min steps), with no agent activity anywhere (only Cron drives the
     /// core); and at the default P with the other agents paying $1 every 5 min. Measured at 1-min
     /// resolution. Logs the worst per period and what was spent meanwhile.
+    /// Since W3 the heartbeat is 40 min only while agents are active (an agent spent or asked
+    /// within the last 2 h); idle it is 120 min (TestnetConfig.IDLE_HEARTBEAT, W1 gate P2-2). So:
+    ///  - other agents active (they pay $1 every 5 min): one 40-min beat cycle, as before;
+    ///  - nobody active anywhere: one 120-min beat cycle, ceil(120 min / P) * P + 2 min. Nothing is
+    ///    spent meanwhile, so the longer wait costs nothing; see the next test for an agent that
+    ///    wakes up during it.
     function test_lostStopReachesEveryChainWithinOneBeatCycle() public {
         uint256[6] memory periods = [uint256(1020), 1064, 1100, 1110, 1140, 1170];
         uint256 worstSpent;
         for (uint256 k; k < periods.length; k++) {
             uint256 p = periods[k];
-            // one beat cycle (the beat lands on the first Cron tick after 40 min) + 2 min delivery
-            uint256 bound = ((40 minutes + p - 1) / p) * p + 2 minutes;
-            uint256 worst;
+            // one beat cycle (the beat lands on the first Cron tick after the beat) + 2 min delivery
+            uint256[2] memory bound =
+                [((120 minutes + p - 1) / p) * p + 2 minutes, ((40 minutes + p - 1) / p) * p + 2 minutes];
+            uint256[2] memory worst;
             for (uint8 pc; pc < 3; pc++) {
                 for (uint256 off; off < 61; off++) {
-                    for (uint256 active; active < (p == 1064 ? 2 : 1); active++) {
+                    for (uint256 active; active < 2; active++) {
+                        if (active == 0 && off % 3 != 0) continue; // idle: every 3rd minute
                         uint256 snap = vm.snapshotState();
                         (uint256 secs, uint256 spent) = _lostPress(pc, off * 1 minutes, active == 1, p);
                         vm.revertToState(snap);
-                        if (secs > worst) worst = secs;
+                        if (secs > worst[active]) worst[active] = secs;
                         if (spent > worstSpent) worstSpent = spent;
-                        assertLe(secs, bound, "a lost STOP took longer than one heartbeat cycle to reach every chain");
+                        assertLe(
+                            secs, bound[active], "a lost STOP took longer than one heartbeat cycle to reach every chain"
+                        );
                     }
                 }
             }
-            console2.log(
-                "Cron period (s) / worst minutes until every chain froze / bound (min)", p, worst / 60, bound / 60
-            );
+            console2.log("Cron period (s)", p);
+            console2.log("  agents active: worst minutes until every chain froze / bound (min)", worst[1] / 60, bound[1] / 60);
+            console2.log("  all idle:      worst minutes until every chain froze / bound (min)", worst[0] / 60, bound[0] / 60);
         }
         console2.log("worst spent by the other agents meanwhile ($, 6 decimals)", worstSpent);
+    }
+
+    /// Idle for 6 h, then an agent starts spending on chain 1 (its first call is refused: a Short),
+    /// and a minute later the owner presses STOP on chain 0, whose log is lost and whose agent
+    /// stays idle. The first sign of spending brings every chain's next beat back within 40 min, so
+    /// STOP reaches every chain within 40 min + one Cron period + delivery of that first spend, not
+    /// one idle cycle. Swept over three Cron periods, two pressing chains and three idle lengths.
+    function test_lostStopAfterAnIdleStretchFollowsTheFirstSpend() public {
+        uint256[3] memory periods = [uint256(1020), 1064, 1170];
+        uint256 worst;
+        for (uint256 k; k < 3; k++) {
+            uint256 p = periods[k];
+            uint256 bound = 40 minutes + p + 2 minutes;
+            for (uint8 pc; pc < 3; pc += 2) {
+                for (uint256 j; j < 3; j++) {
+                    uint256 snap = vm.snapshotState();
+                    _fresh();
+                    h.setCronEvery(p);
+                    h.settleProduction(6 hours + j * 7 minutes);
+                    uint256 woke = block.timestamp;
+                    assertFalse(h.payExact(1, 5e6), "setup: chain 1's first call is refused");
+                    h.settleProduction(60);
+                    h.ownerPressStop(pc);
+                    h.dropFirst(false, STOP_PRESSED, pc);
+                    for (uint256 m; m < 180; m++) {
+                        if (m % 5 == 0) h.payExact(1, 5e5); // chain 1 keeps spending
+                        h.settleProduction(60);
+                        if (core.frozen() && h.wallets(0).frozen() && h.wallets(1).frozen() && h.wallets(2).frozen()) {
+                            break;
+                        }
+                    }
+                    uint256 secs = block.timestamp - woke;
+                    if (secs > worst) worst = secs;
+                    assertLe(secs, bound, "a lost STOP waited for an idle beat cycle although an agent was spending");
+                    _assertSafe();
+                    vm.revertToState(snap);
+                }
+            }
+        }
+        console2.log("lost STOP after an idle stretch: worst minutes from the first spend until all froze", worst / 60);
     }
 
     function _lostPress(uint8 pc, uint256 offset, bool agentsActive, uint256 period)
@@ -104,6 +154,37 @@ contract ProductionTimingTest is Test {
         spent = h.outflowOfDay(_today()) - outAt;
         assertTrue(core.frozen(), "the coordinator never heard the STOP");
         _assertSafe();
+    }
+
+    // ----------------------------------------------------------- idle cost (P2-2)
+
+    /// A day with no agent activity at all, only Cron, on the W2 coordinator (beat every 40 min)
+    /// and the W3 one (idle beat every 120 min). Counts heartbeats and reacts; the lREACT figures in
+    /// live/W3_2026-11-09.md multiply these counts by the measured gas per react.
+    function test_idleDayCostsFewerBeats() public {
+        uint256[2] memory beatsPerDay;
+        uint256[2] memory reactsPerDay;
+        uint256[2] memory ticksPerDay;
+        for (uint8 w3; w3 < 2; w3++) {
+            uint256 snap = vm.snapshotState();
+            vm.warp(T0);
+            h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false, true, w3);
+            core = h.core();
+            h.settleProduction(3 hours); // past the start-up beats and the idle threshold
+            uint256 b0 = h.beats();
+            uint256 r0 = h.toCore() + h.ticks();
+            uint256 t0 = h.ticks();
+            h.settleProduction(24 hours);
+            beatsPerDay[w3] = h.beats() - b0;
+            reactsPerDay[w3] = h.toCore() + h.ticks() - r0;
+            ticksPerDay[w3] = h.ticks() - t0;
+            vm.revertToState(snap);
+        }
+        console2.log("idle day, 3 chains, Cron 17.74 min: Cron ticks / heartbeats / reacts");
+        console2.log("  W2 (40-min beat)       ", ticksPerDay[0], beatsPerDay[0], reactsPerDay[0]);
+        console2.log("  W3 (idle beat 120 min) ", ticksPerDay[1], beatsPerDay[1], reactsPerDay[1]);
+        assertLe(beatsPerDay[1] * 2, beatsPerDay[0], "an idle day still beats as often as an active one");
+        assertLe(beatsPerDay[1], 3 * 13, "more than ~one beat per chain per 2 h while idle");
     }
 
     // ----------------------------------------------------- timeout relations

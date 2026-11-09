@@ -41,7 +41,7 @@ contract RaceTest is Test {
 
     function _race(uint256 order) internal returns (uint256 spent, uint256 inRace, uint256 over) {
         vm.warp(T0);
-        h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false, true, true);
+        h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false, true, 1);
         core = h.core();
         uint64 t = uint64(block.timestamp / 1 days);
         assertFalse(h.payExact(0, 10e6));
@@ -100,7 +100,7 @@ contract RaceTest is Test {
     /// same second. Then the rest of the day as above.
     function test_race_whileARefillAheadReclaimIsInFlight() public {
         vm.warp(T0 - 6 hours); // 06:00
-        h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false, true, true);
+        h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false, true, 1);
         core = h.core();
         uint64 t = uint64(block.timestamp / 1 days);
         assertFalse(h.payExact(0, 10e6));

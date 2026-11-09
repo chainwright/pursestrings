@@ -142,6 +142,8 @@ contract Deploy is Script {
         p.refillHorizon = TestnetConfig.REFILL_HORIZON;
         p.refillLead = TestnetConfig.REFILL_LEAD;
         p.reclaimLead = TestnetConfig.RECLAIM_LEAD;
+        p.idleHeartbeat = TestnetConfig.IDLE_HEARTBEAT;
+        p.idleAfter = TestnetConfig.IDLE_AFTER;
         p.chains = new BudgetCore.ChainParams[](2);
         for (uint256 i; i < 2; i++) {
             w.chainIds[i] = l2[i].chainId;

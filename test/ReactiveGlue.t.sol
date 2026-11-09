@@ -82,6 +82,8 @@ contract ReactiveGlueTest is Test {
         p.refillHorizon = TestnetConfig.REFILL_HORIZON; // as deployed
         p.refillLead = TestnetConfig.REFILL_LEAD;
         p.reclaimLead = TestnetConfig.RECLAIM_LEAD;
+        p.idleHeartbeat = TestnetConfig.IDLE_HEARTBEAT;
+        p.idleAfter = TestnetConfig.IDLE_AFTER;
         p.chains = new BudgetCore.ChainParams[](3);
         p.chains[0] = TestnetConfig.chainParams(TestnetConfig.WAIT_OP_STACK);
         p.chains[1] = TestnetConfig.chainParams(TestnetConfig.WAIT_OP_STACK);

@@ -18,7 +18,7 @@ contract LivenessStats is Test {
         for (uint256 seed; seed < 400; seed++) {
             uint256[3] memory streak;
             vm.warp(1_800_000_000 - (1_800_000_000 % 1 days) + 6 hours);
-            NetworkHandler h = new NetworkHandler(0, false, false, true);
+            NetworkHandler h = new NetworkHandler(0, false, false, 1);
             for (uint256 i; i < 60; i++) {
                 uint256 s = uint256(keccak256(abi.encode(seed, i)));
                 uint256 op = s % 6;

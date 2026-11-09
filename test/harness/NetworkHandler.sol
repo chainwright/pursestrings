@@ -147,12 +147,16 @@ contract NetworkHandler is Test {
     uint256 public toCore; // origin logs delivered to the coordinator (each is one react)
     uint256 public toWallet; // callbacks delivered to a wallet
     uint256 public ticks; // Cron ticks (each is one react)
+    uint256 public beats; // K_EPOCH re-reads delivered (heartbeats and refill-ahead readings)
     uint256 public aheadGrants; // refill ahead: top-ups granted before the chain asked
     uint256 public aheadReclaims; // refill ahead: reclaims sent before any chain asked
 
-    /// `refill` = refill ahead by burn rate on (as deployed); off gives the W2 behaviour (the
-    /// "before" in the waiting-share comparison).
-    constructor(uint256 mutant, bool chaos_, bool productionTiming_, bool refill) {
+    /// `w3`: 1 = the W3 coordinator as deployed (refill ahead by burn rate + idle heartbeat);
+    /// 0 = the W2 behaviour (the "before" in the waiting-share and idle-cost comparisons);
+    /// 2 = refill ahead without the idle heartbeat (to separate the two effects).
+    constructor(uint256 mutant, bool chaos_, bool productionTiming_, uint8 w3) {
+        bool refill = w3 != 0;
+        bool idleBeat = w3 == 1;
         chaosOn = chaos_;
         productionTiming = productionTiming_;
         startDay = uint64(block.timestamp / 1 days);
@@ -173,6 +177,10 @@ contract NetworkHandler is Test {
                 p.refillHorizon = TestnetConfig.REFILL_HORIZON;
                 p.refillLead = TestnetConfig.REFILL_LEAD;
                 p.reclaimLead = TestnetConfig.RECLAIM_LEAD;
+                if (idleBeat) {
+                    p.idleHeartbeat = TestnetConfig.IDLE_HEARTBEAT;
+                    p.idleAfter = TestnetConfig.IDLE_AFTER;
+                }
             }
         } else {
             // Compressed model time: waits of 1-3 min per chain. The ratios match production:
@@ -194,6 +202,10 @@ contract NetworkHandler is Test {
                 p.refillHorizon = 900;
                 p.refillLead = 600;
                 p.reclaimLead = 1500;
+                if (idleBeat) {
+                    p.idleHeartbeat = 5400; // 3 x the beat, as in production
+                    p.idleAfter = 3600;
+                }
             }
         }
         core = mutant == 0 ? new BudgetCoreHarness(p, address(this)) : new MutantCore(p, address(this), mutant);
@@ -727,8 +739,15 @@ contract NetworkHandler is Test {
         delivered++;
         history[hcount % 64] = m;
         hcount++;
-        if (m.toWallet) toWallet++;
-        else toCore++;
+        if (m.toWallet) {
+            toWallet++;
+            if (bytes4(m.data) == SpendWallet.verify.selector) {
+                (uint8 kind,) = abi.decode(_tail(m.data), (uint8, uint256));
+                if (kind == 4) beats++;
+            }
+        } else {
+            toCore++;
+        }
         if (m.toWallet) {
             if (onBranch) {
                 _runOnBranch(m);

@@ -59,6 +59,14 @@ library TestnetConfig {
     uint32 internal constant REFILL_LEAD = 20 minutes;
     uint32 internal constant RECLAIM_LEAD = 90 minutes;
 
+    /// Idle heartbeat (W3, W1 gate P2-2). While no agent has spent or asked for 2 h, each chain is
+    /// beaten every 120 min instead of 40: ~11.6 beats a day per chain instead of ~27 at the observed
+    /// 17.66-min Cron. A lost STOP press then reaches every chain within ceil(120 / P) x P + delivery
+    /// (~126 min) while nothing is being spent, and within one 40-min cycle of the first sign of
+    /// spending (a Short, a LowWater, a reading with more spent). Measured costs: live/W3_2026-11-09.md.
+    uint64 internal constant IDLE_HEARTBEAT = 120 minutes;
+    uint64 internal constant IDLE_AFTER = 2 hours;
+
     uint64 internal constant WAIT_SEPOLIA = 16 minutes;
     uint64 internal constant WAIT_OP_STACK = 30 minutes;
 

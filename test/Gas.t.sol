@@ -319,18 +319,26 @@ contract GasTest is Test {
     // ---------------------------------------------------------------- react()
 
     function _stuffed(uint256 nG, uint256 nP, uint256 nR) internal returns (StuffedReactive rc, GasSystem sys) {
+        (rc, sys) = _build(3);
+        rc.stuff(nG, nP, nR);
+    }
+
+    /// The reactive contract on `n` chains (2 = the testnet deployment), as deployed (TestnetConfig).
+    bool internal w2Params; // build with refill ahead and the idle beat off (the W2 coordinator)
+
+    function _build(uint256 n) internal returns (StuffedReactive rc, GasSystem sys) {
         vm.etch(0x8888888888888888888888888888888888888888, address(new GasSystem()).code);
         sys = GasSystem(payable(0x8888888888888888888888888888888888888888));
         PursestringsReactive.Wiring memory w;
         w.homeChainId = 1;
         w.console = address(0xC0);
-        w.chainIds = new uint256[](3);
-        w.wallets = new address[](3);
-        w.fronts = new address[](3);
-        w.callbackGas = new uint64[](3);
+        w.chainIds = new uint256[](n);
+        w.wallets = new address[](n);
+        w.fronts = new address[](n);
+        w.callbackGas = new uint64[](n);
         w.cronTopic = TestnetConfig.CRON1000;
-        uint64[] memory waits = new uint64[](3);
-        for (uint256 c; c < 3; c++) {
+        uint64[] memory waits = new uint64[](n);
+        for (uint256 c; c < n; c++) {
             w.chainIds[c] = 100 + c;
             w.wallets[c] = address(uint160(0x1000 + c));
             w.fronts[c] = address(uint160(0x2000 + c));
@@ -338,22 +346,25 @@ contract GasTest is Test {
             waits[c] = 60;
         }
         BudgetCore.Params memory p;
-        p.nChains = 3;
+        p.nChains = uint8(n);
         p.cap = 20e6;
         p.keepFloor = 2e6;
         p.pregrantWindow = 2 hours;
         p.heartbeat = TestnetConfig.HEARTBEAT;
-        p.refillHorizon = TestnetConfig.REFILL_HORIZON; // as deployed
-        p.refillLead = TestnetConfig.REFILL_LEAD;
-        p.reclaimLead = TestnetConfig.RECLAIM_LEAD;
-        p.chains = new BudgetCore.ChainParams[](3);
-        for (uint256 c; c < 3; c++) {
+        if (!w2Params) {
+            p.refillHorizon = TestnetConfig.REFILL_HORIZON; // as deployed
+            p.refillLead = TestnetConfig.REFILL_LEAD;
+            p.reclaimLead = TestnetConfig.RECLAIM_LEAD;
+            p.idleHeartbeat = TestnetConfig.IDLE_HEARTBEAT;
+            p.idleAfter = TestnetConfig.IDLE_AFTER;
+        }
+        p.chains = new BudgetCore.ChainParams[](n);
+        for (uint256 c; c < n; c++) {
             p.chains[c] = BudgetCore.ChainParams({
                 confirmWait: uint32(waits[c]), grantTimeout: 300, reclaimTimeout: 300, verifyTimeout: 120, wantTtl: 600
             });
         }
         rc = new StuffedReactive(p, w);
-        rc.stuff(nG, nP, nR);
     }
 
     function _measureReact(StuffedReactive rc, GasSystem sys, IReactive.LogRecord memory l)
@@ -374,6 +385,55 @@ contract GasTest is Test {
         l.topic0 = uint256(t0);
         l.data = data;
         l.opCode = 1;
+    }
+
+    /// What an idle day is made of (P2-2): an idle Cron tick, a tick that sends a heartbeat, and
+    /// the react for the heartbeat's answer (a Verified that confirms nothing). Logged for the cost
+    /// table in live/W3_2026-11-09.md; live, an idle tick measured 93-115k and a beat tick 149-179k.
+    function test_gas_idleReacts() public {
+        vm.warp(T0 + 12 hours);
+        (StuffedReactive rc, GasSystem sys) = _build(2); // the deployment's two chains
+        IReactive.LogRecord memory cron;
+        cron.chainId = block.chainid;
+        cron.contractAddress = 0x0000000000000000000000000000000000fffFfF;
+        cron.topic0 = TestnetConfig.CRON1000;
+        uint256[3] memory g; // max gas of a tick that sent 0, 1, 2 heartbeats
+        for (uint256 k; k < 12; k++) {
+            uint256 n0 = sys.n();
+            uint256 used = _measureReact(rc, sys, cron);
+            uint256 sent = sys.n() - n0;
+            if (sent < 3 && used > g[sent]) g[sent] = used;
+            vm.warp(block.timestamp + 1064);
+        }
+        assertGt(g[0], 0, "setup: no idle tick seen");
+        assertGt(g[1], 0, "setup: no heartbeat tick seen");
+        // the answers, on a one-chain coordinator (its beat is due every 40 min, so readings 11 min
+        // apart have nothing else to send): the first reading, the next (sets a rate, and the
+        // spending it shows wakes the coordinator from idle), the steady state after
+        vm.warp(T0 + 12 hours);
+        (rc, sys) = _build(1);
+        _measureReact(rc, sys, cron);
+        uint256 n1 = sys.n();
+        uint256[3] memory gA;
+        for (uint256 k; k < 3; k++) {
+            BudgetCore.Echo memory v =
+                BudgetCore.Echo(4, 0, true, uint64(block.timestamp / 1 days), 0, k * 1e6, 1, uint64(block.timestamp));
+            gA[k] = _measureReact(rc, sys, _walletLog(0, IWalletEvents.Verified.selector, abi.encode(v)));
+            vm.warp(block.timestamp + 11 minutes);
+        }
+        assertEq(sys.n(), n1, "an answer react sent something");
+        // the same answer on the W2 coordinator (no meter, no idle beat)
+        w2Params = true;
+        vm.warp(T0 + 12 hours);
+        (rc, sys) = _build(1);
+        _measureReact(rc, sys, cron);
+        BudgetCore.Echo memory v2 = BudgetCore.Echo(4, 0, true, uint64(block.timestamp / 1 days), 0, 0, 1, uint64(block.timestamp));
+        uint256 gW2 = _measureReact(rc, sys, _walletLog(0, IWalletEvents.Verified.selector, abi.encode(v2)));
+        w2Params = false;
+        console2.log("gas: idle Cron tick / tick with one heartbeat / with two (2 chains)");
+        console2.log("  ", g[0], g[1], g[2]);
+        console2.log("heartbeat answer gas: first reading / next (rate, wakes from idle) / steady", gA[0], gA[1], gA[2]);
+        console2.log("heartbeat answer gas on the W2 coordinator", gW2);
     }
 
     /// Worst react(): every retry list is long and due, a STOP arrives (one epoch message per

@@ -63,6 +63,12 @@ abstract contract BudgetCore {
         /// Start the donor path once the projected unspent covers less than this and the pool
         /// can't give the next top-up (must exceed refillLead + the confirmation wait + 2 Cron periods).
         uint32 reclaimLead;
+        /// The heartbeat while no agent has spent or asked for `idleAfter` (W3, P2-2): a lost STOP
+        /// press then costs nothing while it waits, so the beat can be slower. 0 = always
+        /// `heartbeat`. Activity (a Short, a LowWater, a meter reading that shows spending) brings
+        /// every chain's next beat back within `heartbeat`.
+        uint64 idleHeartbeat;
+        uint64 idleAfter;
     }
 
     /// A wallet's Verified event, decoded.
@@ -160,12 +166,16 @@ abstract contract BudgetCore {
     uint32 public immutable refillHorizon;
     uint32 public immutable refillLead;
     uint32 public immutable reclaimLead;
+    uint64 public immutable idleHeartbeat;
+    uint64 public immutable idleAfter;
 
     uint256 public cap;
     uint64 public capNonce;
     uint64 public unstopNonce;
     uint64 public epoch;
     bool public frozen;
+    /// When an agent last showed it was spending (a Short, a LowWater, a reading with more spent).
+    uint64 public lastActiveAt;
 
     mapping(uint8 => uint64) public pressSeenAt;
     mapping(uint8 => uint64) public epochAcked;
@@ -239,6 +249,9 @@ abstract contract BudgetCore {
         refillLead = p.refillLead;
         reclaimLead = p.reclaimLead;
         require(p.refillHorizon == 0 || p.reclaimLead > p.refillLead, "reclaimLead must exceed refillLead");
+        require(p.idleHeartbeat == 0 || (p.idleHeartbeat >= p.heartbeat && p.idleAfter > 0), "idle heartbeat");
+        idleHeartbeat = p.idleHeartbeat;
+        idleAfter = p.idleAfter;
         for (uint8 c; c < p.nChains; c++) {
             _beatDue[c] = uint64(block.timestamp) + uint64(c) * p.heartbeat / p.nChains; // staggered
         }
@@ -250,6 +263,7 @@ abstract contract BudgetCore {
 
     function _onShort(uint8 c, uint64 day, uint256 shortBy) internal {
         _alive(c, false);
+        _markActive();
         if (!frozen && day == _today()) {
             Want storage w = want[c];
             if (!_wanting(c, day) || w.amount < shortBy) w.amount = uint128(shortBy);
@@ -261,6 +275,7 @@ abstract contract BudgetCore {
 
     function _onLowWater(uint8 c, uint64 day, uint256 unspent, uint64 ts) internal {
         _alive(c, false);
+        _markActive();
         if (!frozen && day == _today()) {
             if (!_wanting(c, day)) want[c] = Want(day, uint64(block.timestamp), uint128(cap / 10));
             _readAtLowWater(c, day, unspent, ts);
@@ -345,7 +360,7 @@ abstract contract BudgetCore {
 
     function _onVerified(uint8 c, Echo memory v) internal {
         _alive(c, true);
-        if (v.kind == K_EPOCH) _read(c, v.day, v.a1, v.ts);
+        if (v.kind == K_EPOCH && (refillHorizon != 0 || idleHeartbeat != 0)) _read(c, v.day, v.a1, v.ts);
         bytes32 k = _key(v.kind, c, v.key);
         Pending storage p = pending[k];
         if (p.kind != 0) {
@@ -676,6 +691,7 @@ abstract contract BudgetCore {
     function _read(uint8 c, uint64 day, uint256 spent, uint64 ts) internal virtual {
         Meter storage m = meter[c];
         if (!_newerReading(m, day, ts) || spent > type(uint128).max) return;
+        if (spent > (day == m.day ? m.spent : 0)) _markActive();
         if (m.ts == 0) {
             // the very first reading: a basis, no rate yet
             m.fromTs = ts;
@@ -745,7 +761,25 @@ abstract contract BudgetCore {
 
     function _beat(uint8 c, uint64 nowTs) internal virtual {
         _send(c, abi.encodeCall(IWalletInbox.verify, (K_EPOCH, epoch)));
-        _beatDue[c] = nowTs + heartbeat;
+        _beatDue[c] = nowTs + (_isActive() ? heartbeat : idleHeartbeat);
+    }
+
+    /// Active: an agent showed it was spending within `idleAfter` (or the idle beat is off).
+    function _isActive() internal view returns (bool) {
+        return idleHeartbeat == 0 || (lastActiveAt != 0 && block.timestamp < uint256(lastActiveAt) + idleAfter);
+    }
+
+    /// An agent is spending. Coming out of idle, every chain's next beat is brought back within
+    /// `heartbeat`, so a lost STOP press reaches every chain within one active beat cycle of the
+    /// first sign of spending, as before W3.
+    function _markActive() internal virtual {
+        uint64 nowTs = uint64(block.timestamp);
+        if (!_isActive()) {
+            for (uint8 c; c < nChains; c++) {
+                if (_beatDue[c] > nowTs + heartbeat) _beatDue[c] = nowTs + heartbeat;
+            }
+        }
+        lastActiveAt = nowTs;
     }
 
     /// Retries to chain c (its in-flight grant's cancels, its epoch resends) back off up to 32x.
