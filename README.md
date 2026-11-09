@@ -23,9 +23,94 @@ still not covered, and what the spike changed in the design.
 forge build
 forge test             # invariants, directed scenarios, liveness, production timing, gas, Reactive glue (~30-45 s)
 script/mutants.sh      # full suite x 2 seeds per mutant: each must fail, the real contracts must pass (30-60 min, machine-dependent)
-script/dryrun.sh       # the whole testnet deployment + the loops, rehearsed on three local anvils (no network)
+script/dryrun.sh       # the whole testnet deployment + the loops + the pay-per-call demo, on three local anvils (no network)
 python3 script/test_loop_logger.py   # offline tests of the live-loop logger's matching
+python3 demo/test_api.py             # offline tests of the demo API's acceptance rules and the agent's 402 loop
+python3 script/test_checker.py       # offline tests of the checker's arithmetic, log chunking and day ranges
+python3 script/checker.py            # read-only: today's spending on every chain vs the cap, "Over: $0.00"
 ```
+
+## Pay-per-call demo (our own 402 flow, not x402)
+
+`demo/api.py` is a tiny HTTP service (Python standard library only). It sells rows of demo data at
+$1 a row. It uses its own minimal 402 flow with no outside facilitator. It is **not x402-compatible**:
+no x402 headers, no facilitator, no signed authorization. Real x402 is future work (`IDEA_V3.md` v3.1).
+
+1. `GET /v1/snapshot?n=3` without payment answers **402** with a quote: the price, the payee, a fresh
+   `callId`, the accepted chains, an expiry, and a private `claim`.
+2. The agent pays through its own wallet: `SpendWallet.pay(payee, price, callId)`.
+3. The agent repeats the request with `X-Payment: <chainId>:<txHash>:<callId>` and
+   `X-Payment-Claim: <claim>`. The API reads that transaction's receipt from the chain itself. It
+   serves data only if all of these hold:
+   - a wallet registered in the deployment file emitted `Paid` with this callId, payee and amount;
+   - the token contract's own `Transfer` from that wallet to the payee, for exactly that amount,
+     follows the `Paid` log in the same successful tx;
+   - the callId was issued here, is unexpired and unused, and the claim matches.
+
+   The callId is then recorded as used, on disk. A `Paid` emitted by any other contract is refused,
+   even with real tokens moved alongside it. So are a transfer from an unregistered address, a wrong
+   amount or payee, a replay, and someone who saw the agent's tx on-chain but doesn't hold its claim.
+4. If the wallet refused the pay, the agent gets one of two states:
+   - **amber, "budget on its way, retry in ~N s"**: the wallet emitted `Short` and the day still has
+     budget for the call. N is ~5 s when the coordinator's pool covers it (top-up, measured median
+     2 s live). When the budget must come back from another chain it is 310 s between retries,
+     ~30 min in all (donor, measured median 30.4 min).
+   - **red**: the cap is reached (what can still leave today is below the price), or STOP is in
+     force, or the payee or per-call cap isn't allowed, or the coordinator is paused (unfunded).
+   This hint reads the coordinator and the wallets' buckets. The spending check that counts is the
+   checker below.
+
+```
+export PAYEE_ADDRESS=<the payee allowlisted on the wallets>   # plus the RPC/key environment of LIVE_LOOP.md §1
+python3 demo/api.py --port 8402 &                             # read-only on chain: no key
+python3 demo/agent.py --chain base --resource "/v1/snapshot?n=1"                  # 402 -> pay -> data
+python3 demo/agent.py --chain base --resource "/v1/snapshot?n=9" --wait-min 40    # waits through amber
+```
+
+The agent pays through `forge script script/Loop.s.sol --sig "payCall(...)"`, with the agent key
+read inside forge. It refuses a quote above `--max-usd` (default $10) or, when `PAYEE_ADDRESS` is set,
+to any other payee. Exit codes: 0 data, 10 amber with no time left, 11 red, 12 rejected, 4 forge
+failed (it never pays twice blind).
+
+Limits:
+- The demo accepts a payment at 0 confirmations (`--min-confirmations` raises that), so an L2
+  reorg after serving would cost the seller, not the budget.
+- Quotes live in a local JSON file (`cache/demo/api_state.json`).
+
+`script/dryrun.sh` step 4c runs the whole flow on local chains:
+- 402 → pay → data;
+- a replay (409), a fake `Paid` from a contract that also moves $2 of real tokens to the payee, and
+  an onlooker without the claim, all refused;
+- an over-allowance call that gets amber, then is served after the grant lands;
+- a $10 call with $8 left that gets red;
+- the checker reporting Over $0.00.
+
+The API's acceptance rules are mutation-checked: each rule switched off makes `demo/test_api.py`
+fail (`live/W2_DEMO_2026-11-09.md`).
+
+## The checker
+
+`script/checker.py` answers one question: did the wallets, all chains together, send out more than
+the day's cap? It is read-only, needs no key, and works without our tools: Python's standard library
+plus the public RPCs.
+- **What it counts.** It sums the budget token's own ERC-20 `Transfer` logs whose `from` is a
+  deployment wallet, within the UTC day by each chain's block time. It never uses the wallet's own
+  counter. A transfer to the wallet's own vault is a return and is listed apart; anything else that
+  leaves a wallet is spent.
+- **How it finds the day.** The day's blocks are found from timestamps by bisection. Base Sepolia
+  makes a block every 0.2 s, so block counts would be wrong. Log queries are chunked to what each
+  public RPC accepts (Base Sepolia 200 blocks at ≤ 25 requests/s, Unichain Sepolia 1000). A Base
+  Sepolia day takes ~1.5–2 min.
+- **The cap.** It is the coordinator's `capOfDay(d)` on Lasna, or `--cap-usd`.
+- **Output and exit code.** It prints "Over: $0.00" (or the overspend) and "can still leave" per day.
+  It exits 1 if any day is over.
+
+Live, read-only, 09.11 at ~10:03 UTC (`live/checker_2026-11-09.log`):
+- Base Sepolia: $17.00 out in 12 transfers. These are the series' 12 payments, counted here from the
+  token's logs, not from `Paid`.
+- Unichain Sepolia: $0.00.
+- Cap $20: **Over: $0.00**.
+- 07.11 and 08.11: $0.00 against a $4 cap.
 
 Built on reactive-lib-omni v0.1.0. `LIVE_LOOP.md` has the exact commands: the smoke test and the
 compact series (10 top-up, 3 donor, 5 STOP loops, with an agent that keeps asking on the donor
@@ -53,8 +138,8 @@ What the tests do and don't show:
     USDC grant callback used 245,809 gas of its 700k limit.
   - 09.11, the series: top-up median 2 s (n = 10); donor 30.4 min median (n = 3, agent retrying
     every 5 min); STOP to both chains frozen, median 2 s (n = 5).
-  - Not yet live: the lost-STOP heartbeat path. Every other latency figure is from Foundry and
-    our network model.
+  - Not yet live: the lost-STOP heartbeat path, and the demo API (dry run only so far). Every other
+    latency figure is from Foundry and our network model.
 
 ## If the coordinator looks inactive
 

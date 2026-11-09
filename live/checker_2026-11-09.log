@@ -1,0 +1,30 @@
+# script/checker.py, read-only, against deployments/latest.json over the public RPCs (sepolia.base.org,
+# sepolia.unichain.org, lasna-rpc.rnk.dev for capOfDay). Run 09.11.2026 ~10:01-10:06 UTC; Base head at the
+# time 56,483,591 (10:03:07 UTC), so 09.11 is a partial day. No key, no transaction. Command:
+#   python3 script/checker.py --day 2026-11-09 --day 2026-11-08 --day 2026-11-07
+day 2026-11-09 (UTC, day 20766): cap $20.00 (coordinator capOfDay on Lasna)
+  base      wallet 0x8e0c2ad73ef5e7Eb7630126195A37D74C3BD939e  blocks 56302656..56483591 (day still running)
+            out $17.00 in 12 transfer(s); returned to its vault $2.33 in 2
+  unichain  wallet 0xb80D1f2176d721c77A08EA1450B8266293d675de  blocks 67329972..67366211 (day still running)
+            out $0.00 in 0 transfer(s); returned to its vault $9.33 in 5
+  all chains: spent $17.00 of $20.00; can still leave $3.00
+  Over: $0.00
+day 2026-11-08 (UTC, day 20765): cap $4.00 (coordinator capOfDay on Lasna)
+  base      wallet 0x8e0c2ad73ef5e7Eb7630126195A37D74C3BD939e  blocks 55870656..56302655
+            out $0.00 in 0 transfer(s); returned to its vault $0.00 in 0
+  unichain  wallet 0xb80D1f2176d721c77A08EA1450B8266293d675de  blocks 67243572..67329971
+            out $0.00 in 0 transfer(s); returned to its vault $0.00 in 0
+  all chains: spent $0.00 of $4.00; can still leave $4.00
+  Over: $0.00
+day 2026-11-07 (UTC, day 20764): cap $4.00 (coordinator capOfDay on Lasna)
+  base      wallet 0x8e0c2ad73ef5e7Eb7630126195A37D74C3BD939e  blocks 55438656..55870655
+            out $0.00 in 0 transfer(s); returned to its vault $1.00 in 1
+  unichain  wallet 0xb80D1f2176d721c77A08EA1450B8266293d675de  blocks 67157172..67243571
+            out $0.00 in 0 transfer(s); returned to its vault $0.00 in 0
+  all chains: spent $0.00 of $4.00; can still leave $4.00
+  Over: $0.00
+
+real	5m19.829s
+user	0m3.506s
+sys	0m0.594s
+exit 0

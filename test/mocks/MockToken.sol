@@ -12,8 +12,13 @@ contract MockToken {
     mapping(address => mapping(uint64 => uint256)) public outflow;
     mapping(address => uint256) public outflowTotal;
 
+    /// ERC-20's Transfer, as USDC emits it: script/checker.py and the demo API read these logs
+    /// in the dry run.
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
     function mint(address to, uint256 amount) external {
         balanceOf[to] += amount;
+        emit Transfer(address(0), to, amount);
     }
 
     function watch(address wallet, address vault) external {
@@ -38,7 +43,9 @@ contract MockToken {
         require(!blocked[to], "blocked");
         require(balanceOf[msg.sender] >= amount, "balance");
         balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount - amount * feeBps[msg.sender] / 10_000;
+        uint256 delivered = amount - amount * feeBps[msg.sender] / 10_000;
+        balanceOf[to] += delivered;
+        emit Transfer(msg.sender, to, delivered);
         address v = vaultOf[msg.sender];
         if (v != address(0) && to != v) {
             outflow[msg.sender][uint64(block.timestamp / DAY)] += amount;

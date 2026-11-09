@@ -17,6 +17,9 @@
 #      The STOP is traced twice and must be counted once (P0-4).
 #   4b. script/agent_retry.py (P0-2): the agent keeps asking on Unichain Sepolia until the grant
 #      lands, then pays; an ask that is never served exits 2.
+#   4c. demo/api.py + demo/agent.py: 402 -> pay -> data; a replay, a fake Paid (backed by real
+#      tokens from a non-wallet) and an onlooker without the quote's claim are refused; an over-allowance call gets amber, is served once the
+#      grant lands; a call above what is left of the cap gets red; script/checker.py: Over $0.00.
 #   5. script/Loop.s.sol: the live-loop driver (pay, setCap, fundReserves, fundVault, stop)
 # The deployer key is anvil's public development key, derived into an environment variable and
 # never printed. Broadcast logs go to cache/dryrun/ and addresses to deployments/dryrun.json
@@ -134,6 +137,60 @@ r = json.loads(sys.stdin.read())
 assert r["payments"] == 1 and list(r["paidPerDay"].values()) == [1.0], r
 print("   checker (paid-sum): Unichain Sepolia paid", r["paidPerDay"], "in", r["payments"], "payment")
 ' || { echo "FAILED: paid-sum"; exit 1; }
+
+echo "== 4c. demo API (demo/api.py, our own 402 flow) and its agent (demo/agent.py) on Base Sepolia"
+P_API=18402
+export DEMO_API_URL="http://127.0.0.1:$P_API" DEMO_API_STATE=cache/dryrun/demo_api_state.json
+export DEMO_AGENT_LOG=cache/dryrun/demo_agent.jsonl
+echo '{}' > "$DEMO_API_STATE"; : > "$DEMO_AGENT_LOG"
+python3 demo/api.py --port $P_API > cache/dryrun/demo_api.out 2>&1 & pids+=($!)
+for _ in $(seq 1 50); do curl -sf "$DEMO_API_URL/health" >/dev/null && break; sleep 0.2; done
+curl -sf "$DEMO_API_URL/health" >/dev/null || { tail -5 cache/dryrun/demo_api.out; echo "FAILED: demo API did not start"; exit 1; }
+agent_last() {  # $1 = expected exit code; the rest = demo/agent.py args. Shows the agent's last step.
+  local want="$1"; shift
+  set +e; python3 demo/agent.py --chain base "$@" > cache/dryrun/demo_agent.out 2>&1; local rc=$?; set -e
+  python3 -c '
+import json, sys
+r = json.loads(open(sys.argv[1]).readlines()[-1])
+print("   %-24s -> %s (exit %s)%s" % (r["resource"], r["step"], sys.argv[2],
+      "; " + r["message"] if r.get("message") else ("; paid " + r["paid"]["amountUsd"] + " in pay #" + str(r["pays"]) if r.get("paid") else "")))' \
+    "$DEMO_AGENT_LOG" "$rc"
+  [ "$rc" = "$want" ] || { tail -5 cache/dryrun/demo_agent.out; echo "FAILED: agent exit $rc, expected $want"; exit 1; }
+}
+echo "   a. 402 -> pay -> data"
+agent_last 0 --resource "/v1/snapshot?n=1"
+echo "   b. attacks on the API: replay, a fake Paid backed by real tokens from a non-wallet, an onlooker"
+python3 demo/dryrun_checks.py replay || { echo "FAILED: replay check"; exit 1; }
+python3 demo/dryrun_checks.py fake || { echo "FAILED: fake-Paid check"; exit 1; }
+python3 demo/dryrun_checks.py onlooker || { echo "FAILED: onlooker check"; exit 1; }
+echo "   c. over allowance: amber (budget on its way), the grant lands, the agent retries and is served"
+python3 demo/agent.py --chain base --resource "/v1/snapshot?n=9" --wait-min 3 > cache/dryrun/demo_amber.out 2>&1 &
+dpid=$!; pids+=($dpid)
+for _ in $(seq 1 180); do grep -q '"step": "amber"' "$DEMO_AGENT_LOG" && break; sleep 1; done
+amber_tx="$(python3 -c '
+import json, sys
+print(next(r["tx"] for r in map(json.loads, open(sys.argv[1])) if r.get("step") == "amber"))' "$DEMO_AGENT_LOG")" \
+  || { tail -5 cache/dryrun/demo_amber.out; echo "FAILED: no amber answer"; exit 1; }
+grep '"step": "amber"' "$DEMO_AGENT_LOG" | head -1 | python3 -c 'import json,sys; r=json.loads(sys.stdin.read()); print("   amber:", r["message"])'
+python3 script/dryrun_relay.py deliver base "$amber_tx" >/dev/null
+if ! wait "$dpid"; then tail -5 cache/dryrun/demo_amber.out; echo "FAILED: amber call not served after the grant"; exit 1; fi
+python3 -c '
+import json, sys
+r = json.loads(open(sys.argv[1]).readlines()[-1])
+assert r["step"] == "data" and r["pays"] >= 2 and r["paid"]["amount"] == 9000000, r
+print("   served after %d pays (the refused ones moved no money): paid %s" % (r["pays"], r["paid"]["amountUsd"]))' \
+  "$DEMO_AGENT_LOG" || { echo "FAILED: amber log"; exit 1; }
+echo "   d. a call bigger than what is left of today's cap: red"
+agent_last 11 --resource "/v1/snapshot?n=10"
+echo "   e. the checker (script/checker.py): token Transfer logs out of every wallet today vs the cap"
+python3 script/checker.py | sed 's/^/   /'
+python3 script/checker.py --json | python3 -c '
+import json, sys
+r = json.loads(sys.stdin.read())["reports"][0]
+# 1 (agent retry, Unichain) + 1 + 1 (onlooker check) + 9 (demo, Base); the fake Paid moved tokens
+# from a non-wallet: not counted
+assert r["spent"] == 12000000 and r["over"] == 0 and r["cap"] == 20000000, r
+' || { echo "FAILED: checker"; exit 1; }
 
 origin="$(python3 script/dryrun_relay.py stop)"
 python3 script/loop_logger.py trace --path stop --chain unichain --tx "$origin" --timeout-min 0.5 | check_trace 2

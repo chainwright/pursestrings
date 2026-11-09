@@ -2,7 +2,7 @@
 
 **Verdict: gate part 1 passes, with gaps.** The production Solidity for the coordinator and wallets passed 6 invariants under our own fault model of the network: reorder, drop, duplicate, delay, partitions, dead chains, and reorgs, both instant and on branches that stay readable for up to just under the chain's confirmation wait. It also passed 28 deterministic scenarios, one or more per rule (`test/Directed.t.sol`; the two newest, of 09.11, are the 48-h debt pause below), and 9 production-timing tests (`test/ProductionTiming.t.sol`). The mutation gate runs the full `forge test` suite. All 39 deliberate rule breaks (17 hook mutants, 22 source-patch mutants) are caught at the default budget on 2 seeds. 12 lead to a real over-cap payout: 6 shown by the fuzz invariant on its own, 2 more by the seeded coverage walk, 4 only by a scenario written for that rule. The gaps:
 - There is no per-chain block clock (the model has one clock).
-- There is no API fake-event test.
+- The API fake-event test now exists, offline and on local chains (`demo/test_api.py`, `script/dryrun.sh` step 4c, W2 09.11); the demo API has not run against the live deployment.
 - The Reactive adapter runs end to end with a mock system contract, but it is not fuzzed: the fuzz still feeds the core through the test's own decoder.
 - When the spike was written, nothing had run on a live network (see the box below for what has since).
 - Safety rests on every chain's reorgs being shallower than its confirmation wait.
@@ -263,7 +263,7 @@ The production adapter's routing is covered by one scripted end-to-end run (`tes
   - fees and debt as they really behave on Reactive, InsufficientGas, and callback-failure semantics;
   - several wallets per chain and per-agent sub-caps;
   - the real x402 / ERC-1271 path from v3.1;
-  - the API fake-event and used-callId tests (W2);
+  - the demo API against the live deployment (its fake-event and used-callId rules are tested offline and on local chains since W2, 09.11);
   - the dashboard number "X ≥ true remaining";
   - a finer local expiry per allowance (the day bucket is the only expiry, at most about 48 h);
   - the per-chain block clock from the v3.1 gate.

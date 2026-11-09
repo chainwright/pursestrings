@@ -36,6 +36,17 @@ contract Loop is Script {
         console2.log(ok ? "paid" : "refused (Short emitted if over allowance)", amount);
     }
 
+    /// The demo agent (demo/agent.py) pays a quote of the demo API: `amount` to `payee`, tagged
+    /// with the API's `callId`. The receipt says whether it was paid (Paid + the token Transfer)
+    /// or refused (Refused, and Short if over allowance); the log line is the simulation's view.
+    function payCall(uint256 chain, address payee, uint256 amount, bytes32 callId) external {
+        SpendWallet w = _wallet(chain);
+        vm.startBroadcast(vm.envUint("AGENT_PRIVATE_KEY"));
+        bool ok = w.pay(payee, amount, callId);
+        vm.stopBroadcast();
+        console2.log(ok ? "paid (simulated)" : "refused (simulated)", amount);
+    }
+
     /// The owner presses STOP on `chain`: the STOP path's origin event.
     function stop(uint256 chain) external {
         SpendWallet w = _wallet(chain);
