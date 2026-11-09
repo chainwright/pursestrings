@@ -1,0 +1,4 @@
+# Netlify: set the base directory to "dashboard". No build step; the site is dashboard/web.
+[build]
+  publish = "web"
+  command = ""

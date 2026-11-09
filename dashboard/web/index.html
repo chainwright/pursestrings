@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pursestrings · dashboard</title>
+<meta name="description" content="One daily cap for AI agents across chains. Replay of the real testnet transactions of 09.11.2026: top-up, chain-to-chain and STOP loops through Reactive Lasna.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;500;600&family=Schibsted+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app" id="app">
+  <header class="topbar">
+    <div class="brand"><b>Pursestrings</b><span>one daily limit for agents, across chains</span></div>
+    <div class="topmeta">
+      <span class="replay" id="replayTag" hidden>replay · recorded 09.11 · real txs</span>
+      <span class="livetag" id="liveTag" hidden><i></i>live</span>
+      <span class="stamp" id="stamp">loading…</span>
+      <span class="day" id="dayLabel">UTC day · testnets</span>
+    </div>
+    <nav class="modes" id="modes" aria-label="What to show">
+      <button type="button" data-replay="stop">replay: STOP</button>
+      <button type="button" data-replay="topup">replay: top-up</button>
+      <button type="button" data-mode="live" hidden>live</button>
+    </nav>
+  </header>
+
+  <section class="owner" aria-label="What the owner sees">
+    <div class="overline">What the owner sees</div>
+    <div class="headline">
+      <div class="hl-label" id="hlLabel">CAN STILL LEAVE TODAY</div>
+      <div class="hl-num" id="hlNum">…</div>
+      <div class="hl-sub" id="hlSub">loading</div>
+    </div>
+    <div class="camchip" id="camChip" hidden></div>
+    <div class="clock" id="clock" hidden><span class="clock-t" id="clockT">0.0 s</span><span class="clock-l" id="clockL"></span><span class="skip" id="skip" hidden></span></div>
+    <div class="facts">
+      <div class="fact" id="held"></div>
+      <div class="chips">
+        <span class="chip" id="inflight">in flight · nothing</span>
+        <span class="chip calm" id="pausedChip" hidden>coordinator paused</span>
+      </div>
+      <a class="badge" id="overBadge" title="the rule of script/checker.py, applied to the token's own Transfer logs">
+        <span class="b-main" id="overMain">Over …</span><span class="b-sub" id="overSub">checker · token Transfer logs</span>
+      </a>
+    </div>
+    <div class="stopwrap">
+      <button class="stop" id="stopBtn" aria-describedby="stopHint">
+        <span class="stop-fill" id="stopFill"></span>
+        <span class="stop-text" id="stopText">STOP · pull the strings</span>
+        <span class="stop-cord" id="stopCord" aria-hidden="true"><svg width="150" height="20" viewBox="0 0 150 20">
+          <defs><pattern id="sbraid" width="5" height="10" patternUnits="userSpaceOnUse"><rect width="5" height="10" fill="#FF4A1C"/><path d="M0 0L3 5L0 10" stroke="#C2340F" stroke-width="1" fill="none" opacity=".8"/></pattern></defs>
+          <rect x="22" y="5.5" width="130" height="9" rx="1" fill="#8E230A"/>
+          <rect x="22" y="6.5" width="130" height="7" rx="1" fill="url(#sbraid)"/>
+          <rect x="22" y="6.5" width="130" height="2" fill="#FFB29A" opacity=".55"/>
+          <rect x="4" y="2" width="22" height="16" rx="8" fill="#8E230A"/><rect x="6" y="4" width="18" height="12" rx="6" fill="#FF4A1C"/></svg></span>
+      </button>
+    </div>
+    <div class="stop-hint" id="stopHint"></div>
+  </section>
+
+  <section class="field" aria-label="Budget field">
+    <div class="legend">
+      <span class="lg"><svg width="34" height="10" aria-hidden="true"><line x1="3" y1="5" x2="31" y2="5" class="lg-cord-edge"/><line x1="3" y1="5" x2="31" y2="5" class="lg-cord"/><line x1="3" y1="5" x2="31" y2="5" class="lg-cord-shade"/></svg>cord = permission to spend</span>
+      <span class="lg"><svg width="22" height="10" aria-hidden="true"><rect x="1" y="1" width="20" height="8" class="lg-block"/></svg>block = money (never leaves its chain)</span>
+      <span class="lg lg-quiet"><svg width="26" height="10" aria-hidden="true"><line x1="2" y1="5" x2="24" y2="5" class="lg-groove-d"/><line x1="2" y1="6" x2="24" y2="6" class="lg-groove-l"/></svg>groove = route only, not counted</span>
+    </div>
+    <svg id="fieldSvg" class="field-svg" role="img" aria-label="Lasna spool, chain mouths, money and spent cord"></svg>
+  </section>
+
+  <section class="receipts" aria-label="What Reactive did, on-chain">
+    <div class="r-head">
+      <div class="overline">What Reactive did, on-chain <span class="r-more" id="rMore" hidden></span></div>
+      <div class="r-cols mono"><span>id</span><span>what happened</span><span>origin · Lasna react · callback</span><span>actual</span></div>
+    </div>
+    <div class="r-body">
+      <div class="r-list" id="rList"></div>
+      <div class="r-stats" id="rStats"></div>
+    </div>
+  </section>
+</div>
+
+<nav class="debug" id="debug" aria-label="Developer states (shown with ?debug=1)">
+  <button data-mode="live" aria-pressed="false">● live</button>
+  <span class="dbg-l">replay · recorded 09.11</span>
+  <button data-replay="stop">STOP S1</button>
+  <button data-replay="topup">top-up T2</button>
+  <button data-state="open">open</button>
+  <button data-state="amber">amber</button>
+  <button data-state="red">red</button>
+  <button data-state="frozen">frozen</button>
+  <button data-state="paused">paused</button>
+  <button data-theme>theme</button>
+</nav>
+
+<script src="mode.js"></script>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
