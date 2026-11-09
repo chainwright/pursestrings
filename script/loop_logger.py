@@ -12,11 +12,22 @@ printed) and the deployed addresses from DEPLOYMENTS_FILE (default deployments/l
     loop_logger.py last-tx --fn pay --chain base                # hash of the last Loop.s.sol call
 
 How a loop is matched (one loop at a time; not in the 2 h before 00:00 UTC, when pre-grants run):
-  1. the coordinator event on Lasna, at or after the origin block's time, that this path must
-     produce (a heuristic: Reactive's RPC may offer a direct origin-tx link, to check):
+  1. the coordinator event on Lasna that this path must produce:
        topup  GrantSent for the origin chain and the origin's UTC day (not tomorrow's pre-grant)
        donor  ReclaimSent from another chain, then Credited (RECLAIM), then that GrantSent
        stop   Frozen (epoch e)
+     A candidate must pass two floors, so a loop can't match the loop before it (W1 gate P0-3:
+     the Lasna search starts ~35 s before the origin, and a previous loop's GrantSent or Frozen
+     on the same chain used to be taken):
+       - its Lasna block time >= the origin's block time - LOOP_CLOCK_SKEW_SEC (default 2);
+       - its grant id (topup, donor) or epoch (stop) > the largest one already recorded in
+         LOOPS_FILE by a loop with a different origin tx.
+     Among those, the first event emitted by the reactive tx that carries the origin itself (the
+     reactive tx's input holds the origin tx hash inside its LogRecord; seen live on 07.11) is
+     taken at once: link "origin-tx". An event from a later reactive tx (a Cron tick that served
+     the want, say) is taken only if no linked one has appeared LOOP_LINK_GRACE_SEC (default 90)
+     after it was first seen: link "floors". The donor path's Credited and GrantSent come from
+     later reactive txs by design and are searched from the block of the step before.
   2. the callback(s) that ANSWER it, found among getCallbacks(reactive tx) by reading each
      destination receipt for the wallet event that confirms the step applied:
        topup, donor  GrantApplied with that grant's id, from the origin chain's wallet
@@ -25,7 +36,11 @@ How a loop is matched (one loop at a time; not in the 2 h before 00:00 UTC, when
      is recorded with role "other" and does not count.
   3. complete = every required answer was found; GrantNotApplied for the grant is reported as a
      failure. latencySec = the last answer's block time - the origin's block time (timestamps of
-     two different chains: ±1 s).
+     two different chains: ±1 s). A negative latency means an earlier loop was matched: the
+     record is marked incomplete with a failure, never counted.
+
+`summary` keeps one record per origin tx (the last one written), so a re-traced origin is not
+counted twice.
 
 Costs are recorded twice: what the receipts show (gas used x effective gas price), and the fee by
 the documented formula (DOCS_BRIEF section 5): Lasna max(price, basefee) x (gas + 100k); callbacks
@@ -36,6 +51,7 @@ Each trace is appended as one JSON line to live/loops.jsonl (LOOPS_FILE override
 import argparse
 import json
 import os
+import re
 import statistics
 import subprocess
 import sys
@@ -56,6 +72,9 @@ EVENTS = {
     "Frozen": "Frozen(uint64)",
 }
 OUT = os.environ.get("LOOPS_FILE", "live/loops.jsonl")
+SKEW = int(os.environ.get("LOOP_CLOCK_SKEW_SEC", "2"))
+LINK_GRACE = int(os.environ.get("LOOP_LINK_GRACE_SEC", "90"))
+POLL = int(os.environ.get("LOOP_POLL_SEC", "15"))
 
 
 def rpc(env):
@@ -149,14 +168,105 @@ def callbacks(reactive_tx):
     return res
 
 
-def find(rc, name, from_block, pred, deadline):
-    sig = EVENTS[name]
-    while time.time() < deadline:
-        for lg in logs(rc, sig, from_block):
-            if pred(words(lg["data"])):
-                return lg
-        time.sleep(15)
+_block_ts, _tx_input = {}, {}
+
+
+def lasna_block_ts(n):
+    if n not in _block_ts:
+        _block_ts[n] = int(cast("block", str(n), "--field", "timestamp", env="LASNA_RPC_URL"), 0)
+    return _block_ts[n]
+
+
+def carries_origin(reactive_tx, origin_tx):
+    """True if the reactive tx's input holds the origin tx hash (its LogRecord's txHash)."""
+    if reactive_tx not in _tx_input:
+        try:
+            _tx_input[reactive_tx] = cast("tx", reactive_tx, "input", env="LASNA_RPC_URL").lower()
+        except RuntimeError:
+            _tx_input[reactive_tx] = ""
+    return origin_tx.lower().removeprefix("0x") in _tx_input[reactive_tx]
+
+
+def choose(cands, floor_ts, min_word0, now, first_seen, grace=None):
+    """The candidate a loop may take, or None to keep polling. Pure, for the tests.
+
+    cands: logs already filtered by the path's predicate, in chain order, each with "ts" (Lasna
+    block time), "w0" (grant id / epoch) and "linked" (emitted by the reactive tx carrying the
+    origin). first_seen: (tx hash, log index) -> when this trace first saw it, kept by the
+    caller. A candidate older than the origin (minus the clock skew) or with a grant id / epoch
+    a recorded loop already used is never taken. A linked one is taken at once; otherwise the
+    earliest passing one once it has waited `grace` seconds without a linked one appearing."""
+    grace = LINK_GRACE if grace is None else grace
+    ok = [c for c in cands if c["ts"] >= floor_ts and c["w0"] > min_word0]
+    for c in ok:
+        if c["linked"]:
+            return c, "origin-tx"
+    for c in ok:
+        seen = first_seen.setdefault((c["transactionHash"], c.get("logIndex")), now)
+        if now - seen >= grace:
+            return c, "floors"
     return None
+
+
+def find(rc, name, from_block, pred, deadline, origin=None, min_word0=-1, link=True):
+    """Polls for the first coordinator `name` event that passes `pred` and the floors (see the
+    module doc). origin: the origin receipt (time floor and tx link); None for the donor path's
+    later steps, which are ordered by from_block only."""
+    sig = EVENTS[name]
+    first_seen = {}
+    floor_ts = origin["ts"] - SKEW if origin else -1
+    while time.time() < deadline:
+        cands = []
+        for lg in logs(rc, sig, from_block):
+            w = words(lg["data"])
+            if not pred(w):
+                continue
+            c = dict(lg)
+            c["w0"] = w[0]
+            c["ts"] = lasna_block_ts(h(lg["blockNumber"])) if origin else 0
+            c["linked"] = bool(origin and link and carries_origin(lg["transactionHash"], origin["tx"]))
+            cands.append(c)
+        got = choose(cands, floor_ts, min_word0, time.time(), first_seen, grace=LINK_GRACE if link else 0)
+        if got:
+            lg, how = got
+            lg["link"] = how if origin else "after the step before"
+            return lg
+        time.sleep(POLL)
+    return None
+
+
+LABEL_ID = re.compile(r"^GrantApplied#(\d+)$")
+LABEL_EPOCH = re.compile(r"^EpochAck\((\d+), frozen\)")
+
+
+def recorded_floors(path, origin_tx):
+    """The largest grant id and epoch already used by recorded loops with another origin tx.
+    Reads the fields written since P0-3 (grantId, epoch) and, for older records, the answer
+    labels. A missing file gives (-1, -1)."""
+    gid, ep = -1, -1
+    if not os.path.exists(path):
+        return gid, ep
+    with open(path) as f:
+        lines = f.readlines()
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        r = json.loads(line)
+        if r.get("origin", {}).get("tx", "").lower() == origin_tx.lower():
+            continue
+        if r.get("grantId") is not None:
+            gid = max(gid, int(r["grantId"]))
+        if r.get("epoch") is not None:
+            ep = max(ep, int(r["epoch"]))
+        for label in list(r.get("answers", {})) + list(r.get("failures", [])):
+            m = LABEL_ID.match(label) or re.match(r"^GrantNotApplied#(\d+)$", label)
+            if m:
+                gid = max(gid, int(m.group(1)))
+            m = LABEL_EPOCH.match(label)
+            if m:
+                ep = max(ep, int(m.group(1)))
+    return gid, ep
 
 
 def fee_lasna(r):
@@ -215,16 +325,22 @@ def trace(a):
 
     # 1. the coordinator events this loop must produce; the last one carries the callback(s)
     #    whose wallet-side answer ends the loop
+    # floors: nothing a recorded loop (another origin tx) already used, nothing before the origin
+    min_gid, min_epoch = recorded_floors(OUT, a.tx)
     if a.path == "topup":
         # today's grant to the origin chain (not tomorrow's pre-grant)
-        steps = [find(rc, "GrantSent", lasna_from, lambda w: w[1] == idx and w[2] == origin_day, deadline)]
+        steps = [find(rc, "GrantSent", lasna_from, lambda w: w[1] == idx and w[2] == origin_day, deadline,
+                      origin=origin, min_word0=min_gid)]
     elif a.path == "stop":
-        steps = [find(rc, "Frozen", lasna_from, lambda w: True, deadline)]
+        steps = [find(rc, "Frozen", lasna_from, lambda w: True, deadline, origin=origin, min_word0=min_epoch)]
     else:  # donor
-        ask = find(rc, "ReclaimSent", lasna_from, lambda w: w[1] != idx and w[2] == origin_day, deadline)
+        # ReclaimSent ids share the grant id counter (nextId), so the grant floor applies to both
+        ask = find(rc, "ReclaimSent", lasna_from, lambda w: w[1] != idx and w[2] == origin_day, deadline,
+                   origin=origin, min_word0=min_gid)
         cred = ask and find(rc, "Credited", h(ask["blockNumber"]), lambda w: w[0] == 1, deadline)
         grant = cred and find(
-            rc, "GrantSent", h(cred["blockNumber"]), lambda w: w[1] == idx and w[2] == origin_day, deadline
+            rc, "GrantSent", h(cred["blockNumber"]), lambda w: w[1] == idx and w[2] == origin_day, deadline,
+            min_word0=max(min_gid, words(ask["data"])[0])
         )
         steps = [ask, cred, grant]
 
@@ -242,7 +358,11 @@ def trace(a):
             wanted = [(f"EpochAck({e}, frozen) on {n}", wallets[c], t_epoch_ack, e, lambda d: d[0] == 1)
                       for c, n in enumerate(("base", "unichain"))]
 
-    rec = {"path": a.path, "chain": a.chain, "origin": origin, "reactive": [], "answers": {}, "failures": []}
+    rec = {"path": a.path, "chain": a.chain, "origin": origin, "reactive": [], "answers": {}, "failures": [],
+           "links": [lg.get("link") if lg else None for lg in steps],
+           "floors": {"grantIdAbove": min_gid, "epochAbove": min_epoch, "lasnaTsFrom": origin["ts"] - SKEW}}
+    if last:
+        rec["grantId" if a.path in ("topup", "donor") else "epoch"] = words(last["data"])[0]
     seen_dest = {}
     for k, lg in enumerate(steps):
         if not lg:
@@ -286,6 +406,10 @@ def trace(a):
 
     rec["complete"] = bool(wanted) and len(rec["answers"]) == len(wanted) and not rec["failures"]
     rec["latencySec"] = (max(v["ts"] for v in rec["answers"].values()) - origin["ts"]) if rec["complete"] else None
+    if rec["latencySec"] is not None and rec["latencySec"] < 0:
+        # an answer from before the origin: an earlier loop was matched; never count it
+        rec["failures"].append(f"negative latency {rec['latencySec']} s: matched an earlier loop")
+        rec["complete"], rec["latencySec"] = False, None
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "a") as f:
         f.write(json.dumps(rec) + "\n")
@@ -302,10 +426,20 @@ def trace(a):
 def summary(_):
     if not os.path.exists(OUT):
         sys.exit(f"no {OUT} yet")
-    by = {}
-    for line in open(OUT):
+    by, last_by_origin, n = {}, {}, 0
+    with open(OUT) as f:
+        lines = f.readlines()
+    for line in lines:
+        if not line.strip():
+            continue
         r = json.loads(line)
+        n += 1
+        last_by_origin[r["origin"]["tx"].lower()] = r  # a re-traced origin: keep the last record
+    for r in last_by_origin.values():
         by.setdefault(r["path"], []).append(r)
+    if n != len(last_by_origin):
+        print(f"{OUT}: {n} records, {len(last_by_origin)} origins ({n - len(last_by_origin)} re-trace(s) dropped, "
+              f"the last record per origin kept)")
     for path, rs in sorted(by.items()):
         lat = sorted(r["latencySec"] for r in rs if r["latencySec"] is not None)
         lasna = [s["receipt"]["feeFormulaWei"] for r in rs for s in r["reactive"]]
