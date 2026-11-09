@@ -478,6 +478,141 @@ contract DirectedTest is Test {
         h.settleFor(2);
         _assertSafe();
     }
+
+    // ------------------------------------------- coordinator paused in debt (W1 gate P1-9)
+
+    /// Drop every origin log queued for the coordinator: while it is in debt it gets no react(),
+    /// so (worst case) nothing emitted in the window is ever delivered. A paused coordinator also
+    /// sends nothing, so no callback may be queued.
+    function _dropEveryOriginLog() internal {
+        while (true) {
+            uint256 n = h.queueLength();
+            if (n == 0) return;
+            (bool toWallet, uint8 c, bytes32 tag) = h.queueAt(0);
+            assertFalse(toWallet, "a paused coordinator sent a callback");
+            h.dropAll(false, tag, c);
+        }
+    }
+
+    /// The coordinator runs out of reserves and is paused for 48 h (no Cron, no react). Every
+    /// origin event in that window is lost: chain 1's agent keeps paying (and, once dry, emitting
+    /// Short and LowWater), and the owner presses STOP on chain 0, whose agent then stays idle.
+    /// After `depositTo` the first react is a Cron tick. Checks:
+    ///  - STOP reaches the coordinator and every chain on that one tick and the callbacks and
+    ///    events it sets off, with no second tick (both heartbeats are overdue, and the pressing
+    ///    wallet re-announces the press on its re-read);
+    ///  - the leftovers of the day the pause began, stuck in the wallets while the coordinator was
+    ///    down, are swept to the vaults by the epoch messages;
+    ///  - nothing was paid beyond what each wallet held, nothing on the days the coordinator never
+    ///    opened, and nothing after STOP; the books conserve on every open day; tokens conserve.
+    /// Production timing (waits 30/30/16 min, heartbeat 40 min, Cron every 17.74 min).
+    function test_debtPause48h_stopOnChain0_agentOnChain1() public {
+        _debtPause48h(0);
+    }
+
+    /// The same with the press on chain 2. The first tick sends at most two heartbeats (chains 0
+    /// and 1); chain 2's goes out on the next react, which is the answer to the first heartbeat a
+    /// few seconds later, not the next Cron tick.
+    function test_debtPause48h_stopOnChain2_agentOnChain1() public {
+        _debtPause48h(2);
+    }
+
+    function _debtPause48h(uint8 pc) internal {
+        h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false, true);
+        core = h.core();
+        uint64 d0 = _today();
+
+        // Day d0, 06:00: $8 to chains 0 and 1, $4 to chain 2 (the pool is then empty); each spends
+        // some of it.
+        _short(0, 8e6);
+        _short(1, 8e6);
+        _short(2, 4e6);
+        h.settleProduction(10 minutes);
+        assertEq(core.poolOf(d0), 0, "setup: pool empty");
+        assertTrue(h.payExact(0, 2e6) && h.payExact(1, 3e6) && h.payExact(2, 1e6), "setup: spends");
+        h.settleProduction(30 minutes);
+        uint256[3] memory left = [uint256(6e6), 5e6, 3e6];
+        for (uint8 c; c < 3; c++) {
+            assertEq(_w(c).unspentOf(d0), left[c], "setup: unspent before the pause");
+        }
+        assertEq(h.queueLength(), 0, "setup: nothing in flight when the pause begins");
+
+        // The pause: 48 h in 5-min steps; no tick, every origin log lost.
+        uint256 pauseAt = block.timestamp;
+        uint256 paid1;
+        for (uint256 s; s < 576; s++) {
+            vm.warp(block.timestamp + 5 minutes);
+            if (s == 24) {
+                h.ownerPressStop(pc); // 2 h into the pause
+                assertTrue(_w(pc).frozen(), "the pressing chain did not freeze at once");
+            }
+            // chain 1's agent pays $0.25 every hour: 18 times on day d0 (06:45-23:45, $4.50 of its
+            // $5), refused from d0 + 1 on (its LowWater and Shorts are lost too)
+            if (s % 12 == 0 && h.payExact(1, 25e4)) paid1 += 25e4;
+            _dropEveryOriginLog();
+        }
+        assertEq(block.timestamp - pauseAt, 48 hours);
+        uint64 t = _today();
+        assertEq(t, d0 + 2, "setup: two days later");
+        assertEq(paid1, 45e5, "chain 1 paid other than $4.50 of the $5 it held on day d0");
+        // Chain 1's first (refused) pay on d0 + 1 swept its $0.50 leftover: no longer allowance,
+        // owed to the vault. A refusal doesn't flush, so the tokens wait in `stranded` (anyone's
+        // flush() or the next coordinator message returns them).
+        (uint128 a1,) = _w(1).buckets(d0);
+        assertEq(a1, 0, "chain 1's own pay on d0 + 1 did not sweep its $0.50 leftover");
+        assertEq(_w(1).liveUnspent(), 0, "chain 1 still holds spendable allowance");
+        assertEq(_w(1).stranded(), 5e5, "chain 1's swept leftover is not owed to the vault");
+        assertFalse(core.frozen(), "setup: the coordinator never heard the STOP");
+        assertFalse(_w(1).frozen(), "setup: chain 1 still running");
+        assertFalse(core.isOpen(d0 + 1) || core.isOpen(t), "setup: no day opened during the pause");
+        uint8 other = pc == 0 ? 2 : 0; // the idle chain that isn't pressing
+        assertEq(_w(pc).unspentOf(d0), left[pc], "setup: the pressing chain's leftover is stuck");
+        assertEq(_w(other).unspentOf(d0), left[other], "setup: the idle chain's leftover is stuck");
+
+        // Resume: one Cron tick, then whatever it sets off is delivered, with no second tick.
+        h.tick();
+        h.deliverAll();
+        assertTrue(core.frozen(), "STOP did not reach the coordinator within one react of the resume");
+        for (uint8 c; c < 3; c++) {
+            assertTrue(_w(c).frozen(), "STOP did not reach every chain within one react of the resume");
+            assertEq(_w(c).epoch(), core.epoch(), "a wallet is not on the coordinator's epoch");
+        }
+
+        // Leftovers swept: no allowance left anywhere, every token back in its vault.
+        for (uint8 c; c < 3; c++) {
+            (uint128 allowance,) = _w(c).buckets(d0);
+            assertEq(allowance, 0, "a past day's leftover is still a bucket");
+            assertEq(_w(c).liveUnspent(), 0, "allowance left after STOP");
+            assertEq(_w(c).stranded(), 0, "a leftover is still owed to the vault");
+            assertEq(h.tokens(c).balanceOf(address(_w(c))), 0, "a leftover is still in the wallet");
+            assertEq(
+                h.tokens(c).balanceOf(address(h.vaults(c))) + h.tokens(c).outflowTotal(address(_w(c))),
+                100 * h.CAP(),
+                "tokens do not conserve: vault + paid != funded"
+            );
+        }
+
+        // No overspend: nothing on the unopened day, nothing today, nothing after STOP.
+        assertFalse(h.payExact(1, 1e6), "chain 1 paid after STOP");
+        assertEq(h.outflowOfDay(d0), 2e6 + 3e6 + 1e6 + paid1, "day d0 outflow");
+        assertEq(h.outflowOfDay(d0 + 1), 0, "paid on a day the coordinator never opened");
+        assertEq(h.outflowOfDay(t), 0, "paid on the resume day");
+
+        // Books conserve on every open day; the unopened day stays empty.
+        for (uint64 d = d0; d <= t; d++) {
+            uint256 sum = core.poolOf(d);
+            for (uint8 c; c < 3; c++) {
+                sum += core.heldOf(d, c);
+            }
+            assertEq(sum, core.capOfDay(d), "books: pool + held != cap");
+        }
+        assertEq(core.capOfDay(d0 + 1), 0, "the unopened day has a cap");
+
+        // The owner's STOP holds after the network runs on (invariant (s)), and every rule holds.
+        h.settleProduction(2 hours);
+        h.healAndSettle();
+        _assertSafe();
+    }
 }
 
 /// What the confirmation wait protects against, shown on purpose: a reorg DEEPER than the wait.
