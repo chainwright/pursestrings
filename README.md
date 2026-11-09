@@ -5,8 +5,8 @@ One daily allowance for your agents, on every chain. Money moves only locally
 coordinated by a reactive contract on Reactive Network (Lasna).
 
 Status: week 1. Deployed on testnets on 07.11.2026 (coordinator on Lasna, wallet + vault + front
-on Base Sepolia and on Unichain Sepolia; the console on Base Sepolia). Addresses and creation
-hashes: `deployments/README.md`. The live smoke test passed: one top-up loop and one STOP, each
+on Base Sepolia and on Unichain Sepolia; the console on Base Sepolia). Addresses, creation
+hashes and source verification (all eight are an exact match on Sourcify): `deployments/README.md`. The live smoke test passed: one top-up loop and one STOP, each
 answered on-chain 2 s after its origin (`live/LIVE_RUN_2026-11-07.md`). On 09.11 UTC the compact
 live series ran in full (`live/SERIES_2026-11-09.md`):
 - 10 top-up loops: all complete, median 2 s, p95 3 s;
@@ -15,7 +15,8 @@ live series ran in full (`live/SERIES_2026-11-09.md`):
 - 12 successful agent payments, $17 in all, under the $20 daily cap.
 
 The coordinator then used up its reserve and is paused again until funded (a paused coordinator
-is not charged; Cron resumes by itself after `depositTo`, seen live). `SPIKE_RESULT.md` covers the protocol spike: what passed, the mutants, what is
+is not charged; Cron resumes by itself after `depositTo`, seen live; see "If the coordinator
+looks inactive" below). `SPIKE_RESULT.md` covers the protocol spike: what passed, the mutants, what is
 still not covered, and what the spike changed in the design.
 
 ```
@@ -54,6 +55,32 @@ What the tests do and don't show:
     every 5 min); STOP to both chains frozen, median 2 s (n = 5).
   - Not yet live: the lost-STOP heartbeat path. Every other latency figure is from Foundry and
     our network model.
+
+## If the coordinator looks inactive
+
+Reactscan may show the coordinator on Lasna as inactive. That means it ran out of lREACT and is
+paused, not broken. A paused coordinator is not charged and gets no `react()` calls. Nothing can
+overspend while it is paused: a wallet can spend only today's bucket, and no new bucket is
+granted. Each vault stays withdrawable by its owner on its own chain.
+
+One `depositTo` wakes it, and Cron resumes by itself. We saw this live on 09.11:
+- deposit of 3 lREACT at 05:18:06 UTC, which settled the 0.0076 debt first:
+  [`0xc006f5af…6c98`](https://lasna.reactscan.net/tx/0xc006f5afc4254d1563ed18bee2da2ff1d4451d24e87bf8452d1d8ab9f6d96c98);
+- the next Cron1000 tick, block 7,897,001 at 05:33:35 UTC, already carried our reactive tx
+  [`0x3a5712a8…a2a7`](https://lasna.reactscan.net/tx/0x3a5712a8242d77a7ebda2383e007e7c5e654e8ba26e5ed67df67cf9944d4a2a7)
+  (193,268 gas). No other step was needed.
+
+A STOP pressed during a pause still holds. The pressing chain freezes in the same transaction,
+and on the first Cron tick after the deposit the coordinator carries the STOP to every chain
+(`test_debtPause48h_*` in `test/Directed.t.sol`: a 48 h pause with every event in it lost).
+
+The current deployment has been paused since the end of the 09.11 series (debt 0.0142 lREACT) and
+stays that way until the final deployment. Plan for the judging window: the judged coordinator is
+the final deployment, kept funded from submission until results. At the measured ≈ 2.9 lREACT a
+day (100 gwei), two weeks is ≈ 40 lREACT, about 0.4 Sepolia ETH through the faucet. We deposit
+≈ 6 lREACT every two days, never far ahead, because reserves can't be withdrawn, and check after
+each deposit that the next tick carries our tx (`loop_logger.py cron-check`). If it lapses anyway,
+it pauses in the safe state above, and one deposit brings it back.
 
 ## Fees and funding (for the live loop)
 
