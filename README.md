@@ -14,6 +14,10 @@ live series ran in full (`live/SERIES_2026-11-09.md`):
 - 5 STOP presses: both chains frozen, median 2 s, p95 3 s;
 - 12 successful agent payments, $17 in all, under the $20 daily cap.
 
+**Branch `w3-final`** holds the code for the final redeploy (W3, `live/W3_2026-11-09.md`): refill
+ahead by burn rate, the idle heartbeat and the `flush()` sweep below. The 07.11 deployment runs
+`main` (`272db8f` for `src/`), which is what Sourcify verifies; none of the W3 changes is live yet.
+
 The coordinator then used up its reserve and is paused again until funded (a paused coordinator
 is not charged; Cron resumes by itself after `depositTo`, seen live; see "If the coordinator
 looks inactive" below). `SPIKE_RESULT.md` covers the protocol spike: what passed, the mutants, what is
@@ -88,6 +92,45 @@ Limits:
 The API's acceptance rules are mutation-checked: each rule switched off makes `demo/test_api.py`
 fail (`live/W2_DEMO_2026-11-09.md`).
 
+## Refill ahead by burn rate (branch `w3-final`, final redeploy)
+
+The coordinator tops a busy chain up before its agent is refused, and starts the slow donor path
+(30 min) before the chain runs out:
+- **A meter per chain.** Every heartbeat re-read now answers with that wallet's spent for today,
+  and a LowWater counts as a reading when the books are exact for that chain. The rate is the spend
+  over the last window (at least 10 min). Readings apply only in origin-time order. The meter
+  steers refills only and never enters the books, so a wrong reading can cost a wait or park
+  budget on the wrong chain, never exceed the cap.
+- **Only for fast chains** (burning a chunk, cap/10, within 90 min), and only on a fresh reading
+  (asked for first if needed; the answer arrives seconds later):
+  - with < 20 min of spending left (one Cron period plus margin), a top-up of 1 h of its rate from
+    the pool;
+  - with < 90 min left and a pool that can't give that top-up, one reclaim per react from the chain
+    with the most slack beyond its floor, one chunk and its own projected need.
+- Slower chains, and chains that are projected dry but don't ask, are left to the W2 path
+  (LowWater or a refusal, then a top-up in seconds or the donor path). Every grant and reclaim
+  goes through the same code as before, after the frozen check: rules 1-6, the cap and STOP are
+  unchanged.
+
+**Share of payments that had to wait**, in a simulated day at production timing
+(`test/RefillAhead.t.sol`, 30 days per demand profile, the same days with refill ahead off and on):
+
+| Demand | Off (W2) | On (W3) | Calls waiting >= 20 min | Total minutes waited |
+|---|---|---|---|---|
+| burst: $7/h on one chain for 90 min | 4.8 % | **1.6 %** | 4 → 1 | 441 → 102 |
+| night batch: $2.5/h for 4 h | 0.6 % | 0.9 % | 0 → 3 | 23 → 119 |
+| steady: $0.7/h all day | 1.8 % | 1.9 % | 1 → 3 | 88 → 147 |
+
+It helps where the W2 coordinator is weak: a burst outruns the $1 low-water cushion, and the
+donor path started too late. On gentler days the W2 path already rarely waits, and refill ahead
+is a wash: in the last two rows some calls that would have waited until midnight (the budget left
+sits on other chains' floors) are paid after a wait instead, so counting those, it is 6.1 % → 6.1 %
+and 13.2 % → 13.0 %. It is a model, not a measurement.
+
+**The race** (`test/Race.t.sol`): agents on both chains pay $1 at a time in the same second while a
+reclaim (or a refill-ahead reclaim) is in flight, in five orders. Every day ends **Over $0.00**;
+what is spent varies ($19.38-$20.00), and we never promise exactly $20.
+
 ## The checker
 
 `script/checker.py` answers one question: did the wallets, all chains together, send out more than
@@ -130,7 +173,10 @@ What the tests do and don't show:
   until Reactive confirms it delivers only finalized logs.
 - STOP latency after a lost STOP log depends on the Cron period (1000 Lasna blocks): one
   heartbeat cycle plus delivery, 51-59 min in our model for a Cron of 17-19.5 min (53 at the
-  17.74 min derived from Lasna's block time). The observed Cron1000 period is 17.66 min (mean of
+  17.74 min derived from Lasna's block time). On `w3-final` the heartbeat is 40 min only while an
+  agent has spent or asked in the last 2 h: then the worst is 46 min. With nobody spending it is
+  120 min (worst 123 min at 17.74), and nothing is spent meanwhile; the first spend brings the
+  40-min beat back (STOP everywhere within 42 min of it in the model). The observed Cron1000 period is 17.66 min (mean of
   173 live intervals, 1,050-1,074 s), so the 17.74-min model figure stands within 0.5 %. A STOP
   whose log is delivered (the normal case) took 2 s live.
 - Live so far:
@@ -154,6 +200,10 @@ One `depositTo` wakes it, and Cron resumes by itself. We saw this live on 09.11:
 - the next Cron1000 tick, block 7,897,001 at 05:33:35 UTC, already carried our reactive tx
   [`0x3a5712a8…a2a7`](https://lasna.reactscan.net/tx/0x3a5712a8242d77a7ebda2383e007e7c5e654e8ba26e5ed67df67cf9944d4a2a7)
   (193,268 gas). No other step was needed.
+
+On `w3-final`, anyone can also call `flush()` on a wallet while the coordinator is paused: it
+sweeps yesterday's leftover allowance and returns it to the vault, with no agent payment and no
+coordinator message (W1 gate P1-8; the deployed wallets don't sweep in `flush()`).
 
 A STOP pressed during a pause still holds. The pressing chain freezes in the same transaction,
 and on the first Cron tick after the deposit the coordinator carries the STOP to every chain
@@ -179,6 +229,9 @@ it pauses in the safe state above, and one deposit brings it back.
   **Measured: ≈ 2.9 lREACT a day idle at 100 gwei** (≈ 5 at 175): the 3-lREACT deposit lasted
   ≈ 22 h with the smoke test inside. An idle tick uses 93-115k gas (≈ 0.02 lREACT); the heaviest
   live react was 507,771 gas.
+  On `w3-final`, the heartbeat slows to 120 min while no agent spends: an idle day goes from
+  ≈ 54 to ≈ 23 heartbeats on two chains, ≈ 2.9 → ≈ 2.3 lREACT a day at 100 gwei (estimate from the
+  measured gas, `live/W3_2026-11-09.md`; not measured live).
   The series (09.11, 100 gwei) cost **4.51 lREACT in ≈ 4 h**. Per loop, from the reserve deltas:
   - top-up ≈ 0.057, ticks included;
   - donor ≈ 0.33;
