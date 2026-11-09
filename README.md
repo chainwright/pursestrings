@@ -49,6 +49,21 @@ python3 script/checker.py            # read-only: today's spending on every chai
 
 `LIVE_LOOP.md` has the exact live commands: the smoke test and the compact series (10 top-up, 3 donor, 5 STOP loops, with an agent that keeps asking on the donor path), both as they were run, with measured costs.
 
+## Dashboard
+
+`dashboard/` is a read-only page of what the owner sees: one daily cap as a cord on a spool, the money on each chain, and every loop with its explorer links. It has two modes, and it never holds a key or sends a transaction.
+
+- **Replay** (the default, and the whole static build). It replays the real testnet transactions of 09.11.2026 from `dashboard/web/data.js` and is labelled `replay · recorded 09.11 · real txs`. Hold STOP for 0.6 s to replay the recorded press S1 (both chains frozen 2 s later), or press `replay: top-up` for loop T2. `dashboard/test_dashboard.py` checks every hash and time in `data.js` against `live/` and `broadcast/`.
+- **Live**. `dashboard/server.py` reads Base Sepolia, Unichain Sepolia and Lasna through their public RPCs (standard library only) and the page draws today's state from it. A cold start reads the UTC day's logs first (~3–4 min).
+
+```
+python3 -m http.server 8000 --directory dashboard/web   # replay: open http://127.0.0.1:8000/
+python3 dashboard/server.py --port 8917                 # live: open http://127.0.0.1:8917/ (?mode=replay for the replay)
+python3 dashboard/test_dashboard.py                     # offline tests of the replay data and the copy
+```
+
+Deploying it: `dashboard/web/` is a plain static site with no build step. Serve that folder from GitHub Pages (an Actions upload of `dashboard/web`), from Netlify (base directory `dashboard`, `dashboard/netlify.toml`), or from any web server. Add `?debug=1` to see the developer bar with the recorded states. More: `dashboard/NOTES.md`.
+
 ## Pay-per-call demo (our own 402 flow, not x402)
 
 `demo/api.py` is a tiny HTTP service (Python standard library only). It sells rows of demo data at
