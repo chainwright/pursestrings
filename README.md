@@ -13,7 +13,7 @@ For people who let AI agents pay for APIs and services on more than one chain an
 | Donor: budget moved from Unichain to Base | [Base `0x6a8f…2b62`](https://base-sepolia.blockscout.com/tx/0x6a8f115cb141ef68124717b9af493a3e333578a23a0f0b502c271a72ffcd2b62) | [`0x4549…14bb`](https://lasna.reactscan.net/tx/0x4549903286455dda6be4ec54e7b9e9465534b5859ef5089004f1ff313fd314bb), [`0xfa5c…1a8f`](https://lasna.reactscan.net/tx/0xfa5c7b2d46f83f90fcd59926b194475eadd2f314fa0ad1045e718e8fedac1a8f) | [reclaim, Unichain `0xe3dd…1d39`](https://sepolia.uniscan.xyz/tx/0xe3ddec4724171323ee70f7e7662b6ddba34e5e85e3e4626a9a00df174f081d39), [GrantApplied, Base `0xfb1d…eca5`](https://base-sepolia.blockscout.com/tx/0xfb1d78dbc1da727b6b5c44d20fa277b8bbff4412c828015e04b6fcd690eeeca5) | 31 min (30 of them our deliberate L2 confirmation wait) |
 
 **Verify in 5 minutes** (no key, no transaction):
-1. Open the links above. The top-up and STOP answers sit in blocks seconds after their origin; the donor's comes after the 30-min wait. Their sender is Reactive Network's callback proxy (`0x476F…3585` on Base Sepolia, `0x775c…66C1` on Unichain Sepolia), which calls our contracts.
+1. Open the links above. The top-up and STOP answers sit in blocks seconds after their origin; the donor's comes after the 30-min wait. Each answer is a `deliverCallback` transaction sent by Reactive's relayer (`0xF7E8…1DDb`, the explorer's From field) to Reactive Network's callback proxy (`0x476F…3585` on Base Sepolia, `0x775c…66C1` on Unichain Sepolia, the To field). The proxy then calls our contracts: our callback front, then the wallet (the tx's internal calls).
 2. `deployments/README.md` links each of the 8 contracts to its Sourcify exact match.
 3. Run:
 ```
@@ -31,7 +31,7 @@ Deployed on testnets on 07.11.2026 from this branch (`main`; `src/` unchanged si
 - 5 STOP presses: both chains frozen, median 2 s, p95 3 s;
 - 12 successful agent payments, $17 in all, under the $20 daily cap (paid to our own deployer address).
 
-The coordinator then used up its reserve and has been paused since 09.11 09:15 UTC (debt 0.0142 lREACT; see "If the coordinator looks inactive" below). The judged deployment will be the final one, kept funded through judging.
+The coordinator then used up its reserve and has been paused since 09.11 09:15 UTC (debt 0.0142 lREACT; see "If the coordinator looks inactive" below). This deployment of 07.11.2026 (`main`) is the judged one: there is no redeploy for judging. It will be funded again before the demo video is recorded, and kept funded from submission until results.
 
 ## Run it
 
@@ -168,9 +168,9 @@ and on the first Cron tick after the deposit the coordinator carries the STOP to
 (`test_debtPause48h_*` in `test/Directed.t.sol`: a 48 h pause with every event in it lost). Other
 chains keep spending only what they already hold until the deposit.
 
-The current deployment has been paused since 09.11 09:15 UTC (debt 0.0142 lREACT) and stays that
-way until the final deployment. Plan for the judging window: the judged coordinator is the final
-deployment, kept funded from submission until results. At the measured ≈ 2.9 lREACT a day
+The current deployment has been paused since 09.11 09:15 UTC (debt 0.0142 lREACT). It is the judged
+deployment (07.11.2026, `main`), with no redeploy for judging. Plan for the judging window: it is
+funded again before the demo video is recorded, and kept funded from submission until results. At the measured ≈ 2.9 lREACT a day
 (100 gwei), 05.12 to late December is ≈ 26 days ≈ 75 lREACT idle, plus ≈ 0.6 per STOP cycle
 (≈ 0.75 Sepolia ETH through the faucet). We deposit ≈ 6 lREACT every two days, never far ahead,
 because reserves can't be withdrawn, and check after each deposit that the next tick carries our
