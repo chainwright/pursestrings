@@ -33,8 +33,34 @@ broadcast record).
 Same addresses on both L2s are expected: the deployer's nonce sequence is the same on each chain,
 and Base deploys one more contract (the console) first.
 
-Source: `src/` is unchanged since the deploy commit `0a2e273` (`git diff 0a2e273 HEAD -- src` is
-empty), so the contracts can be verified from HEAD. None is source-verified yet (W1 gate P1-5).
+## Source verification (09.11.2026 UTC)
+
+All eight contracts are verified on Sourcify with an **exact match** on both the creation and the
+runtime bytecode, metadata hash included. `src/`, `lib/` (submodule commits), `foundry.toml` and
+`remappings.txt` are unchanged since the deploy commit `0a2e273` (`git diff 0a2e273 HEAD -- src lib
+foundry.toml remappings.txt` is empty), and each on-chain creation input starts byte for byte with
+the creation bytecode `forge build` produces at HEAD. Settings: solc 0.8.29, optimizer on, 200 runs,
+EVM `cancun`, no via-IR. Constructor arguments were taken from each creation tx's input (the bytes
+after the creation bytecode), not from forge's multi-chain record, whose Unichain arguments are
+mislabeled. Base Sepolia's and Unichain Sepolia's Blockscout pick the Sourcify match up and show
+each contract as fully verified.
+
+| Chain | Contract | Address | Verifier | Status |
+|---|---|---|---|---|
+| Lasna (5318007) | PursestringsReactive | `0x7B8111CDF7001721469c584Fa9613369F0E7aC1E` | Sourcify | [exact match](https://repo.sourcify.dev/5318007/0x7B8111CDF7001721469c584Fa9613369F0E7aC1E) |
+| Base Sepolia (84532) | OwnerConsole | `0x9C1E06984DC361226EB9db2f14A089f93b1Fe12d` | Sourcify (+ Blockscout) | [exact match](https://repo.sourcify.dev/84532/0x9C1E06984DC361226EB9db2f14A089f93b1Fe12d), [Blockscout](https://base-sepolia.blockscout.com/address/0x9C1E06984DC361226EB9db2f14A089f93b1Fe12d?tab=contract) |
+| Base Sepolia | CallbackFront | `0xEDe676F068c225315a3973BCdefB40364C26567d` | Sourcify (+ Blockscout) | [exact match](https://repo.sourcify.dev/84532/0xEDe676F068c225315a3973BCdefB40364C26567d), [Blockscout](https://base-sepolia.blockscout.com/address/0xEDe676F068c225315a3973BCdefB40364C26567d?tab=contract) |
+| Base Sepolia | Vault | `0xb80D1f2176d721c77A08EA1450B8266293d675de` | Sourcify (+ Blockscout) | [exact match](https://repo.sourcify.dev/84532/0xb80D1f2176d721c77A08EA1450B8266293d675de), [Blockscout](https://base-sepolia.blockscout.com/address/0xb80D1f2176d721c77A08EA1450B8266293d675de?tab=contract) |
+| Base Sepolia | SpendWallet | `0x8e0c2ad73ef5e7Eb7630126195A37D74C3BD939e` | Sourcify (+ Blockscout) | [exact match](https://repo.sourcify.dev/84532/0x8e0c2ad73ef5e7Eb7630126195A37D74C3BD939e), [Blockscout](https://base-sepolia.blockscout.com/address/0x8e0c2ad73ef5e7Eb7630126195A37D74C3BD939e?tab=contract) |
+| Unichain Sepolia (1301) | CallbackFront | `0x9C1E06984DC361226EB9db2f14A089f93b1Fe12d` | Sourcify (+ Blockscout) | [exact match](https://repo.sourcify.dev/1301/0x9C1E06984DC361226EB9db2f14A089f93b1Fe12d), [Blockscout](https://unichain-sepolia.blockscout.com/address/0x9C1E06984DC361226EB9db2f14A089f93b1Fe12d?tab=contract) |
+| Unichain Sepolia | Vault | `0xEDe676F068c225315a3973BCdefB40364C26567d` | Sourcify (+ Blockscout) | [exact match](https://repo.sourcify.dev/1301/0xEDe676F068c225315a3973BCdefB40364C26567d), [Blockscout](https://unichain-sepolia.blockscout.com/address/0xEDe676F068c225315a3973BCdefB40364C26567d?tab=contract) |
+| Unichain Sepolia | SpendWallet | `0xb80D1f2176d721c77A08EA1450B8266293d675de` | Sourcify (+ Blockscout) | [exact match](https://repo.sourcify.dev/1301/0xb80D1f2176d721c77A08EA1450B8266293d675de), [Blockscout](https://unichain-sepolia.blockscout.com/address/0xb80D1f2176d721c77A08EA1450B8266293d675de?tab=contract) |
+
+Check any row: `curl -s https://sourcify.dev/server/v2/contract/<chainId>/<address>` returns
+`"match":"exact_match"`. To reproduce a verification:
+`forge verify-contract <address> <path>:<Contract> --chain <chainId> --verifier sourcify --constructor-args <hex> --compiler-version 0.8.29 --num-of-optimizations 200 --evm-version cancun --watch`.
+The callback proxies (`0x476F…3585` on Base Sepolia, `0x775c…66C1` on Unichain Sepolia) and the
+system contract `0x8888…8888` on Lasna belong to Reactive Network, not to this deployment.
 
 ## Loop transactions of 07.11 (smoke steps D and E)
 
