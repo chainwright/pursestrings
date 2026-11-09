@@ -17,7 +17,11 @@ is appended as one JSON line to AGENT_LOG (default live/agent_retry.jsonl): time
 which wallet events its receipt holds (Short, LowWater, Paid, Refused).
 
 Exit codes: 0 served and paid; 2 not served before --timeout-min (the run book says what to check);
-3 the final pay was refused although the allowance had arrived; 1 setup error.
+3 the final pay was refused although the allowance had arrived; 4 a pay landed after forge gave up
+but its outcome could not be read (stopped rather than pay twice); 1 setup error.
+Late landing: before each pay the agent's nonce (AGENT_ADDRESS) and the block are read. If forge
+fails, the nonce is watched for LATE_WAIT_SEC (default 120); if it moved, the wallet's events since
+that block decide the outcome, so a mined pay is never counted as a failed ask.
 Lapse handling: if an attempt fails (an RPC hiccup) the next one is tried after 30 s instead of
 --every-sec, and a warning is printed when more than WANT_TTL_SEC (default 2400) passed since the
 last Short, because the coordinator has then dropped the want and the next Short opens a new one.
@@ -43,6 +47,8 @@ EVENTS = {
     "Refused": "Refused(bytes32,uint8)",
 }
 WANT_TTL = int(os.environ.get("WANT_TTL_SEC", "2400"))
+LATE_WAIT = int(os.environ.get("LATE_WAIT_SEC", "120"))
+LOG_CHUNK = 1000
 
 
 def run(cmd, timeout=300):
@@ -67,6 +73,44 @@ def topics():
         r = run([CAST, "keccak", sig])
         out[r.stdout.strip().lower()] = name
     return out
+
+
+def agent_nonce(rpc, agent):
+    r = run([CAST, "nonce", agent, "--rpc-url", rpc])
+    if r.returncode != 0:
+        raise RuntimeError(f"cast nonce failed: {r.stderr.strip()[:200]}")
+    return int(r.stdout.strip())
+
+
+def block_number(rpc):
+    r = run([CAST, "block-number", "--rpc-url", rpc])
+    if r.returncode != 0:
+        raise RuntimeError(f"cast block-number failed: {r.stderr.strip()[:200]}")
+    return int(r.stdout.strip())
+
+
+def landed_late(rpc, agent, wallet, nonce0, block0, tops, wait_sec=None):
+    """forge gave up on a pay, but the tx may still be mined (07:0x UTC 09.11: mined 37 s later and
+    paid $1, while the run logged "ask failed"). Wait up to wait_sec for the agent's nonce to pass
+    nonce0. Not advanced -> None (a real failure). Advanced -> (tx hash or None, [wallet events])
+    read from the wallet's logs since block0, in chunks (Base Sepolia makes ~5 blocks a second)."""
+    end = time.time() + (LATE_WAIT if wait_sec is None else wait_sec)
+    while agent_nonce(rpc, agent) <= nonce0:
+        if time.time() >= end:
+            return None
+        time.sleep(10)
+    tx, evs, head = None, [], block_number(rpc)
+    for lo in range(block0, head + 1, LOG_CHUNK):
+        r = run([CAST, "logs", "--from-block", str(lo), "--to-block", str(min(lo + LOG_CHUNK - 1, head)),
+                 "--address", wallet, "--json", "--rpc-url", rpc])
+        if r.returncode != 0:
+            raise RuntimeError(f"cast logs failed: {r.stderr.strip()[:200]}")
+        for l in json.loads(r.stdout or "[]"):
+            t = l["topics"][0].lower() if l.get("topics") else ""
+            if t in tops:
+                tx = l.get("transactionHash", tx)
+                evs.append(tops[t])
+    return tx, evs
 
 
 def pay_once(chain_idx, chain_id, rpc, wallet, amount, tops):
@@ -104,6 +148,10 @@ def main():
         sys.exit(f"set {rpc_env}")
     dep = json.load(open(os.environ.get("DEPLOYMENTS_FILE", "deployments/latest.json")))
     wallet = dep[a.chain]["wallet"]
+    agent = os.environ.get("AGENT_ADDRESS")
+    if not agent:
+        print("warning: AGENT_ADDRESS unset, so a pay that forge gives up on but that still lands is "
+              "logged as failed (and may be followed by a second pay)", file=sys.stderr)
     log_path = os.environ.get("AGENT_LOG", "live/agent_retry.jsonl")
     os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
     tops = topics()
@@ -113,6 +161,37 @@ def main():
         with open(log_path, "a") as f:
             f.write(json.dumps(kw) + "\n")
         print(json.dumps(kw), flush=True)
+
+    def attempt():
+        """One pay. (tx, events) if it was mined, also when forge gave up first; (False, None) if not."""
+        while True:
+            try:
+                nonce0 = agent_nonce(rpc, agent) if agent else None
+                block0 = block_number(rpc)
+                break
+            except RuntimeError as e:
+                log(step="read failed", error=str(e)[:200])
+                time.sleep(30)
+        try:
+            return pay_once(idx, chain_id, rpc, wallet, a.amount, tops)
+        except (RuntimeError, subprocess.TimeoutExpired) as e:
+            late = None
+            if agent:
+                try:
+                    late = landed_late(rpc, agent, wallet, nonce0, block0, tops)
+                except RuntimeError as e2:
+                    late = (None, ["unknown"])
+                    log(step="late check failed", error=str(e2)[:200])
+            if late is None:
+                log(step="ask failed", error=str(e)[:300])
+                return False, None
+            log(step="ask landed after forge gave up", tx=late[0], events=late[1])
+            if "unknown" in late[1]:
+                # the nonce moved but its outcome is unread: never risk a second payment blind
+                print("the agent's tx was mined but its events could not be read; stopping. Check the "
+                      "wallet's Paid/Refused logs, then rerun.", file=sys.stderr)
+                sys.exit(4)
+            return late
 
     start = time.time()
     deadline = start + a.timeout_min * 60
@@ -139,10 +218,8 @@ def main():
         if last_short is not None and t0 - last_short > WANT_TTL:
             print(f"warning: {int(t0 - last_short)} s since the last Short, past the {WANT_TTL} s want TTL: the "
                   "coordinator has dropped the want; this ask opens a new one", file=sys.stderr)
-        try:
-            tx, evs = pay_once(idx, chain_id, rpc, wallet, a.amount, tops)
-        except (RuntimeError, subprocess.TimeoutExpired) as e:
-            log(step="ask failed", error=str(e)[:300])
+        tx, evs = attempt()
+        if tx is False:
             time.sleep(min(30, max(0, deadline - time.time())))
             continue
         asks += 1
@@ -157,7 +234,9 @@ def main():
 
     if a.no_final_pay:
         return
-    tx, evs = pay_once(idx, chain_id, rpc, wallet, a.amount, tops)
+    tx, evs = attempt()
+    if tx is False:
+        sys.exit(3)
     log(step="paid" if "Paid" in evs else "final pay refused", tx=tx, events=evs, asks=asks,
         waitedSec=int(time.time() - start))
     if "Paid" not in evs:

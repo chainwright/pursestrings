@@ -318,6 +318,13 @@ donor 2000000 && sleep 60 && donor 1000000 && sleep 60 && donor 1000000
 Only after the donor loops.
 
 ```bash
+# First block of the last $2 seconds on RPC $1, from the chain's measured block time. A fixed
+# "head - 150" covered only ~30 s on Base Sepolia (~0.2 s/block) and missed every ack on 09.11.
+since() {
+  local h t0 t1; h=$(cast block-number --rpc-url $1)
+  t1=$(cast block $h --field timestamp --rpc-url $1); t0=$(cast block $((h - 1000)) --field timestamp --rpc-url $1)
+  echo $(( h - $2 * 1000 / (t1 - t0 > 0 ? t1 - t0 : 1) ))
+}
 stopcycle() {  # $1 = chain that presses: 1, 0, 1, 0, 1
   local n; n=$([ "$1" = 0 ] && echo base || echo unichain)
   forge script script/Loop.s.sol --sig "stop(uint256)" $1 --broadcast | grep -E "STOP"
@@ -327,8 +334,8 @@ stopcycle() {  # $1 = chain that presses: 1, 0, 1, 0, 1
   forge script script/Loop.s.sol --sig "unstop()" --broadcast | grep -E "unstop sent"
   echo "unstop $(python3 script/loop_logger.py last-tx --fn unstop --chain base)"
   sleep 40   # then the EpochAck(e+1, false) on both chains, recorded by hand (the logger has no unstop path)
-  cast logs --from-block $(( $(cast block-number --rpc-url $B) - 150 )) --address $W0 'EpochAck(uint64,bool,uint64)' --rpc-url $B | grep -E "transactionHash|data"
-  cast logs --from-block $(( $(cast block-number --rpc-url $U) - 150 )) --address $W1 'EpochAck(uint64,bool,uint64)' --rpc-url $U | grep -E "transactionHash|data"
+  cast logs --from-block $(since $B 180) --address $W0 'EpochAck(uint64,bool,uint64)' --rpc-url $B | grep -E "transactionHash|data"
+  cast logs --from-block $(since $U 180) --address $W1 'EpochAck(uint64,bool,uint64)' --rpc-url $U | grep -E "transactionHash|data"
   sleep 80   # >= 2 min between presses
 }
 for c in 1 0 1 0 1; do stopcycle $c || break; done
