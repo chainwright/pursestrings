@@ -144,8 +144,15 @@ contract NetworkHandler is Test {
     uint256 public credits;
     uint256 public voidsSeen;
     uint256 public maxQueue;
+    uint256 public toCore; // origin logs delivered to the coordinator (each is one react)
+    uint256 public toWallet; // callbacks delivered to a wallet
+    uint256 public ticks; // Cron ticks (each is one react)
+    uint256 public aheadGrants; // refill ahead: top-ups granted before the chain asked
+    uint256 public aheadReclaims; // refill ahead: reclaims sent before any chain asked
 
-    constructor(uint256 mutant, bool chaos_, bool productionTiming_) {
+    /// `refill` = refill ahead by burn rate on (as deployed); off gives the W2 behaviour (the
+    /// "before" in the waiting-share comparison).
+    constructor(uint256 mutant, bool chaos_, bool productionTiming_, bool refill) {
         chaosOn = chaos_;
         productionTiming = productionTiming_;
         startDay = uint64(block.timestamp / 1 days);
@@ -162,6 +169,11 @@ contract NetworkHandler is Test {
             p.chains[1] = TestnetConfig.chainParams(TestnetConfig.WAIT_OP_STACK);
             p.chains[2] = TestnetConfig.chainParams(TestnetConfig.WAIT_SEPOLIA);
             p.heartbeat = TestnetConfig.HEARTBEAT;
+            if (refill) {
+                p.refillHorizon = TestnetConfig.REFILL_HORIZON;
+                p.refillLead = TestnetConfig.REFILL_LEAD;
+                p.reclaimLead = TestnetConfig.RECLAIM_LEAD;
+            }
         } else {
             // Compressed model time: waits of 1-3 min per chain. The ratios match production:
             // reorg window < wait < reclaimTimeout (= wait + 2 x verifyTimeout) <= wantTtl.
@@ -176,6 +188,13 @@ contract NetworkHandler is Test {
                 });
             }
             p.heartbeat = 1800;
+            if (refill) {
+                // the same ratios on compressed time: lead > a tick (1-5 min), reclaim lead >
+                // lead + wait + 2 ticks, horizon a few ticks
+                p.refillHorizon = 900;
+                p.refillLead = 600;
+                p.reclaimLead = 1500;
+            }
         }
         core = mutant == 0 ? new BudgetCoreHarness(p, address(this)) : new MutantCore(p, address(this), mutant);
         console = new OwnerConsole(OWNER);
@@ -183,9 +202,7 @@ contract NetworkHandler is Test {
         for (uint8 c; c < N; c++) {
             MockToken t = new MockToken();
             Vault v = new Vault(IERC20Min(address(t)), OWNER);
-            SpendWallet w = mutant == 0
-                ? new SpendWallet(IERC20Min(address(t)), v, BRIDGE, OWNER, AGENT, PER_CALL, FLOOR, LOW)
-                : new MutantWallet(IERC20Min(address(t)), v, BRIDGE, OWNER, AGENT, PER_CALL, FLOOR, LOW, mutant);
+            SpendWallet w = _newWallet(t, v, mutant);
             vm.startPrank(OWNER);
             v.bind(address(w));
             w.setPayee(PAYEE, true);
@@ -196,6 +213,12 @@ contract NetworkHandler is Test {
             vaults[c] = v;
             wallets[c] = w;
         }
+    }
+
+    function _newWallet(MockToken t, Vault v, uint256 mutant) internal returns (SpendWallet) {
+        return mutant == 0
+            ? new SpendWallet(IERC20Min(address(t)), v, BRIDGE, OWNER, AGENT, PER_CALL, FLOOR, LOW)
+            : new MutantWallet(IERC20Min(address(t)), v, BRIDGE, OWNER, AGENT, PER_CALL, FLOOR, LOW, mutant);
     }
 
     // =========================================================== fuzz actions
@@ -217,6 +240,18 @@ contract NetworkHandler is Test {
             if (!wallets[c].frozen()) lastNeed[c] = amt;
         }
         _checkStops();
+    }
+
+    /// A busy agent (W3): 3-12 small payments ($0.05-$0.25) on one chain, a few seconds apart, with the network
+    /// delivering in between, so the meters see high burn rates and refill ahead acts.
+    function burst(uint256 s) public {
+        uint8 c = uint8(s % N);
+        uint256 n = 3 + (s >> 8) % 10;
+        for (uint256 i; i < n; i++) {
+            payExact(c, CAP / 400 + (s >> (16 + i)) % (CAP / 100)); // $0.05-$0.25
+            _advance(1 + (s >> (24 + i)) % 20);
+            if (_qlen() > 0) _deliverAt(0);
+        }
     }
 
     function deliverNext() public {
@@ -253,6 +288,7 @@ contract NetworkHandler is Test {
     }
 
     function tick() public {
+        ticks++;
         _runCore(abi.encodeCall(BudgetCoreHarness.onTick, ()), 0);
     }
 
@@ -691,6 +727,8 @@ contract NetworkHandler is Test {
         delivered++;
         history[hcount % 64] = m;
         hcount++;
+        if (m.toWallet) toWallet++;
+        else toCore++;
         if (m.toWallet) {
             if (onBranch) {
                 _runOnBranch(m);
@@ -753,6 +791,10 @@ contract NetworkHandler is Test {
                     cancelsSent++;
                 } else if (t0 == BudgetCore.Credited.selector) {
                     credits++;
+                } else if (t0 == BudgetCore.Ahead.selector) {
+                    (uint8 kind,,,) = abi.decode(l.data, (uint8, uint8, uint256, uint256));
+                    if (kind == 1) aheadGrants++;
+                    else aheadReclaims++;
                 }
                 continue;
             }
@@ -845,8 +887,8 @@ contract NetworkHandler is Test {
             (uint64 day, uint256 shortBy,) = abi.decode(data, (uint64, uint256, uint64));
             cd = abi.encodeCall(BudgetCoreHarness.onShort, (c, day, shortBy));
         } else if (t0 == IWalletEvents.LowWater.selector) {
-            (uint64 day,,) = abi.decode(data, (uint64, uint256, uint64));
-            cd = abi.encodeCall(BudgetCoreHarness.onLowWater, (c, day));
+            (uint64 day, uint256 unspent, uint64 ts) = abi.decode(data, (uint64, uint256, uint64));
+            cd = abi.encodeCall(BudgetCoreHarness.onLowWater, (c, day, unspent, ts));
         } else if (t0 == IWalletEvents.GrantApplied.selector) {
             cd = abi.encodeCall(BudgetCoreHarness.onGrantApplied, (c, uint256(topics[1])));
         } else if (t0 == IWalletEvents.GrantNotApplied.selector) {

@@ -79,6 +79,9 @@ contract ReactiveGlueTest is Test {
         p.keepFloor = 2e6;
         p.pregrantWindow = 2 hours;
         p.heartbeat = TestnetConfig.HEARTBEAT;
+        p.refillHorizon = TestnetConfig.REFILL_HORIZON; // as deployed
+        p.refillLead = TestnetConfig.REFILL_LEAD;
+        p.reclaimLead = TestnetConfig.RECLAIM_LEAD;
         p.chains = new BudgetCore.ChainParams[](3);
         p.chains[0] = TestnetConfig.chainParams(TestnetConfig.WAIT_OP_STACK);
         p.chains[1] = TestnetConfig.chainParams(TestnetConfig.WAIT_OP_STACK);
@@ -189,7 +192,10 @@ contract ReactiveGlueTest is Test {
         _pump();
         _react(_cron(TestnetConfig.CRON1000));
         _pump();
-        assertGt(rc.poolOf(t) + wallets[2].unspentOf(t), 0, "a confirmed reclaim was credited");
+        // the donor (chain 1: chain 0 has nothing above its floor) gave up allowance, and it was
+        // credited back to the pool (or on from the pool to a chain: with refill ahead the pool
+        // need not stay where it was credited)
+        assertLt(rc.heldOf(t, 1), 10e6, "a confirmed reclaim was credited");
         // CapSet from the console
         vm.prank(OWNER);
         console.setCap(30e6);

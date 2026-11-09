@@ -23,8 +23,8 @@ contract BudgetCoreHarness is BudgetCore {
         _onShort(c, day, shortBy);
     }
 
-    function onLowWater(uint8 c, uint64 day) external onlyFeeder {
-        _onLowWater(c, day);
+    function onLowWater(uint8 c, uint64 day, uint256 unspent, uint64 ts) external onlyFeeder {
+        _onLowWater(c, day, unspent, ts);
     }
 
     function onGrantApplied(uint8 c, uint256 grantId) external onlyFeeder {

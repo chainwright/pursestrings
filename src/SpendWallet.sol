@@ -304,7 +304,11 @@ contract SpendWallet is IWalletInbox, IWalletEvents {
             RollRec memory r = rollRec[uint64(key)];
             emit Verified(kind, key, r.at != 0, r.day, r.today, r.tomorrow, r.at, nowTs);
         } else if (kind == K_EPOCH) {
-            emit Verified(kind, key, epoch >= key, 0, 0, 0, epochSince, nowTs);
+            // The heartbeat re-read doubles as a meter reading: today's unspent and spent, so the
+            // coordinator can refill ahead by burn rate without a react per payment.
+            uint64 t = today();
+            Bucket memory b = buckets[t];
+            emit Verified(kind, key, epoch >= key, t, b.allowance - b.spent, b.spent, epochSince, nowTs);
         }
         _echoStopForCoordinator(); // the coordinator's heartbeat is a verify: a lost press rides on it
     }

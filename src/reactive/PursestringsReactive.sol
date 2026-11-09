@@ -120,8 +120,8 @@ contract PursestringsReactive is BudgetCore, AbstractReactive {
             (uint64 day, uint256 shortBy,) = abi.decode(log.data, (uint64, uint256, uint64));
             _onShort(c, day, shortBy);
         } else if (t0 == IWalletEvents.LowWater.selector) {
-            (uint64 day,,) = abi.decode(log.data, (uint64, uint256, uint64));
-            _onLowWater(c, day);
+            (uint64 day, uint256 unspent, uint64 ts) = abi.decode(log.data, (uint64, uint256, uint64));
+            _onLowWater(c, day, unspent, ts);
         } else if (t0 == IWalletEvents.GrantApplied.selector) {
             _onGrantApplied(c, log.topic1);
         } else if (t0 == IWalletEvents.GrantNotApplied.selector) {

@@ -46,6 +46,19 @@ library TestnetConfig {
     /// callbacks per ~51-56 min in an idle system.
     uint64 internal constant HEARTBEAT = 40 minutes;
 
+    /// Refill ahead by burn rate (W3, from the 09.11 live numbers: top-up p50 2 s, chain to chain
+    /// ~30 min, Cron1000 17.66 min observed):
+    ///  - a top-up covers 1 h of the chain's measured rate (at least one chunk, cap / 10);
+    ///  - it goes out once the projection says < 20 min of spending is left: one Cron period
+    ///    (17.66 min) plus margin, so it lands on the last tick before the chain runs dry, and the
+    ///    2-s top-up path is never on a payment's critical path;
+    ///  - the donor path starts once < 90 min is left and the pool can't give the top-up: the
+    ///    reclaim goes out within one Cron period, is credited after the 30-min wait plus up to
+    ///    one more period, which is ~65 min, ahead of the 20-min top-up point.
+    uint32 internal constant REFILL_HORIZON = 1 hours;
+    uint32 internal constant REFILL_LEAD = 20 minutes;
+    uint32 internal constant RECLAIM_LEAD = 90 minutes;
+
     uint64 internal constant WAIT_SEPOLIA = 16 minutes;
     uint64 internal constant WAIT_OP_STACK = 30 minutes;
 

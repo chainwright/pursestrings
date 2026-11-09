@@ -32,7 +32,7 @@ contract DirectedTest is Test {
 
     function setUp() public {
         vm.warp(T0);
-        h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false, false);
+        h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false, false, true);
         core = h.core();
     }
 
@@ -555,7 +555,7 @@ contract DirectedTest is Test {
     }
 
     function _debtPause48h(uint8 pc) internal {
-        h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false, true);
+        h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false, true, true);
         core = h.core();
         uint64 d0 = _today();
 
@@ -660,7 +660,7 @@ contract DirectedTest is Test {
 contract AssumptionTest is Test {
     function test_outsideTheModel_reorgDeeperThanTheWaitOvercredits() public {
         vm.warp(1_800_000_000 - (1_800_000_000 % 1 days) + 6 hours);
-        NetworkHandler h = new NetworkHandler(0, false, false);
+        NetworkHandler h = new NetworkHandler(0, false, false, true);
         bytes32 reclaim = bytes32(SpendWallet.applyReclaim.selector);
         uint64 t = uint64(block.timestamp / 1 days);
         assertFalse(h.payExact(0, 10e6));

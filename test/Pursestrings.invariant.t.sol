@@ -19,9 +19,9 @@ contract PursestringsInvariantTest is StdInvariant, Test {
     function setUp() public {
         vm.warp(1_800_000_000); // a fixed date; 12:00 UTC-ish within its day
         uint256 m = vm.envOr("MUTANT", uint256(0));
-        h = new NetworkHandler(m, true, false);
+        h = new NetworkHandler(m, true, false, true);
         core = h.core();
-        bytes4[] memory sels = new bytes4[](9);
+        bytes4[] memory sels = new bytes4[](10);
         sels[0] = NetworkHandler.pay.selector;
         sels[1] = NetworkHandler.deliverBatch.selector;
         sels[2] = NetworkHandler.deliverAny.selector;
@@ -31,6 +31,7 @@ contract PursestringsInvariantTest is StdInvariant, Test {
         sels[6] = NetworkHandler.duplicate.selector;
         sels[7] = NetworkHandler.deliverNext.selector;
         sels[8] = NetworkHandler.heal.selector;
+        sels[9] = NetworkHandler.burst.selector;
         targetContract(address(h));
         targetSelector(FuzzSelector({addr: address(h), selectors: sels}));
     }
@@ -87,6 +88,22 @@ contract PursestringsInvariantTest is StdInvariant, Test {
                 (uint128 allowance,) = h.wallets(c).buckets(d);
                 assertLe(allowance, core.heldOf(d, c), "(e) wallet allowance above coordinator's held");
             }
+        }
+    }
+
+    /// (f) The cap invariant in the wallets' own terms (W3): for today and tomorrow, the sum over
+    /// chains of each wallet's allowance for the day (unspent + spent) never exceeds the owner's
+    /// cap for that day. Refill ahead moves allowance earlier and between chains; this must hold
+    /// at every step, not only once the network settles.
+    function invariant_f_sumOfAllowancesWithinCap() public view {
+        uint64 t = core.today();
+        for (uint64 d = t; d <= t + 1; d++) {
+            uint256 sum;
+            for (uint8 c; c < 3; c++) {
+                (uint128 allowance,) = h.wallets(c).buckets(d);
+                sum += allowance;
+            }
+            assertLe(sum, h.gDayCap(d), "(f) sum of allowances (unspent + spent) above the owner's cap");
         }
     }
 
@@ -148,7 +165,7 @@ contract PursestringsLivenessTest is Test {
         returns (uint256 maxStreak)
     {
         vm.warp(1_800_000_000 - (1_800_000_000 % 1 days) + 6 hours); // 06:00, far from midnight
-        NetworkHandler h = new NetworkHandler(0, false, production);
+        NetworkHandler h = new NetworkHandler(0, false, production, true);
         for (uint256 i; i < 60; i++) {
             uint256 s = uint256(keccak256(abi.encode(seed, i)));
             uint256 op = s % 6;
@@ -224,21 +241,33 @@ contract PursestringsLivenessTest is Test {
 /// Not an invariant by itself; it reports coverage for SPIKE_RESULT.md and re-checks (a)-(c).
 contract PursestringsCoverageWalk is Test {
     function test_coverageWalk() public {
+        _walk("walk", 7, vm.envOr("WALK_STEPS", uint256(4000)));
+    }
+
+    /// The same walk with busy agents (NetworkHandler.burst) as an eighth action, so refill ahead
+    /// by burn rate acts under every fault (W3). A separate walk, so the original one's sequence,
+    /// and the mutants it is known to catch, stay as they were.
+    function test_coverageWalkWithBursts() public {
+        _walk("burst walk", 8, vm.envOr("WALK_STEPS", uint256(4000)));
+    }
+
+    function _walk(string memory tag, uint256 ops, uint256 steps) internal {
         vm.warp(1_800_000_000);
-        NetworkHandler h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), true, false);
-        uint256 steps = vm.envOr("WALK_STEPS", uint256(4000));
+        NetworkHandler h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), true, false, true);
         for (uint256 i; i < steps; i++) {
-            uint256 s = uint256(keccak256(abi.encode("walk", i)));
-            uint256 op = s % 7;
+            uint256 s = uint256(keccak256(abi.encode(tag, i)));
+            uint256 op = s % ops;
             if (op == 0) h.pay(s >> 8, s >> 32);
             else if (op == 1) h.deliverBatch(s >> 8);
             else if (op == 2) h.deliverAny(s >> 8);
             else if (op == 3) h.warp(s >> 8);
             else if (op == 4) h.tick();
             else if (op == 5) h.chaos(s >> 8);
-            else h.duplicate(s >> 8);
+            else if (op == 6) h.duplicate(s >> 8);
+            else h.burst(s >> 8);
             if (i % 500 == 499) h.healAndSettle();
         }
+        console2.log(tag);
         console2.log("steps", steps);
         console2.log("days crossed / outages", h.daysCrossed(), h.outages());
         console2.log("pays ok / refused", h.paysOk(), h.paysRefused());
@@ -261,6 +290,7 @@ contract PursestringsCoverageWalk is Test {
         console2.log("stale-epoch grants delivered / to an unfrozen wallet", h.staleGrants(), h.staleGrantsUnfrozen());
         console2.log("  ... of them never seen before (the rule-6 path)", h.freshStaleUnfrozen());
         console2.log("max queue", h.maxQueue());
+        console2.log("refill ahead: top-ups / reclaims", h.aheadGrants(), h.aheadReclaims());
         string memory why = h.safetyFailure();
         require(bytes(why).length == 0, why);
     }

@@ -72,6 +72,20 @@ contract StuffedReactive is PursestringsReactive {
         }
     }
 
+    /// Refill ahead primed on every chain: each holds `heldEach`, its meter (read just now) says it
+    /// has spent `spentEach` at `rateH` per hour, so the next react finds every chain due.
+    function primeRefill(uint256 heldEach, uint256 spentEach, uint256 rateH) external {
+        uint64 t = _today();
+        _open(t);
+        for (uint8 c; c < nChains; c++) {
+            _days[t].pool -= uint120(heldEach);
+            _days[t].held[c] += heldEach;
+            meter[c] = Meter(
+                t, uint64(block.timestamp), uint128(spentEach), uint64(block.timestamp), uint128(spentEach), uint128(rateH)
+            );
+        }
+    }
+
     /// Stuffed entries whose retry has never been sent (grant never cancelled, re-read never asked).
     function unserviced() external view returns (uint256 g, uint256 p) {
         for (uint256 i; i < _liveGrants.length; i++) {
@@ -329,6 +343,9 @@ contract GasTest is Test {
         p.keepFloor = 2e6;
         p.pregrantWindow = 2 hours;
         p.heartbeat = TestnetConfig.HEARTBEAT;
+        p.refillHorizon = TestnetConfig.REFILL_HORIZON; // as deployed
+        p.refillLead = TestnetConfig.REFILL_LEAD;
+        p.reclaimLead = TestnetConfig.RECLAIM_LEAD;
         p.chains = new BudgetCore.ChainParams[](3);
         for (uint256 c; c < 3; c++) {
             p.chains[c] = BudgetCore.ChainParams({
@@ -391,6 +408,25 @@ contract GasTest is Test {
             if (gShort > worst) worst = gShort;
             if (gStop > worst) worst = gStop;
             if (gCron > worst) worst = gCron;
+            vm.revertToState(snap);
+        }
+        // Refill ahead on every chain at once (W3): long due lists, every chain's meter says it is
+        // about to run dry, the pool can cover only part, so the call both tops up and reclaims.
+        for (uint256 s; s < 2; s++) {
+            uint256 snap = vm.snapshotState();
+            vm.warp(T0 + 12 hours);
+            (StuffedReactive rc, GasSystem sys) = _stuffed(0, sizes[s], sizes[s]);
+            rc.primeRefill(6e6, 5e6, 3e6); // $1 left at $3/h: inside the 20-min lead
+            IReactive.LogRecord memory cron;
+            cron.chainId = block.chainid;
+            cron.contractAddress = 0x0000000000000000000000000000000000fffFfF;
+            cron.topic0 = TestnetConfig.CRON1000;
+            uint256 n0 = sys.n();
+            uint256 gAhead = _measureReact(rc, sys, cron);
+            console2.log("  refill ahead on every chain, list size / react gas / callback requests", sizes[s], gAhead, sys.n() - n0);
+            assertLe(sys.n() - n0, rc.MAX_SENDS());
+            assertGt(sys.n() - n0, 0, "no refill ahead was sent");
+            if (gAhead > worst) worst = gAhead;
             vm.revertToState(snap);
         }
         console2.log("worst react() gas", worst, "limit asserted", LIMIT_REACT);

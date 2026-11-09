@@ -27,7 +27,7 @@ contract ProductionTimingTest is Test {
 
     function _fresh() internal {
         vm.warp(T0);
-        h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false, true);
+        h = new NetworkHandler(vm.envOr("MUTANT", uint256(0)), false, true, true);
         core = h.core();
     }
 

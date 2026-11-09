@@ -54,6 +54,15 @@ abstract contract BudgetCore {
         /// It carries a lost STOP press back even if nothing else is sent to that chain.
         /// 0 = off.
         uint64 heartbeat;
+        /// Refill ahead by burn rate (see _refillAhead). A top-up covers this many seconds of the
+        /// chain's measured spend rate (at least one chunk). 0 = refill ahead off.
+        uint32 refillHorizon;
+        /// Top up from the pool once the chain's projected unspent covers less than this (must
+        /// exceed the Cron period: the top-up goes out on the last react before the chain runs dry).
+        uint32 refillLead;
+        /// Start the donor path once the projected unspent covers less than this and the pool
+        /// can't give the next top-up (must exceed refillLead + the confirmation wait + 2 Cron periods).
+        uint32 reclaimLead;
     }
 
     /// A wallet's Verified event, decoded.
@@ -118,6 +127,22 @@ abstract contract BudgetCore {
         uint128 amount;
     }
 
+    /// A chain's spend meter. Every K_EPOCH re-read (the heartbeat is one) answers with that
+    /// wallet's spent for today at an origin time, and a LowWater is a reading when held is exact
+    /// (see _readAtLowWater); the rate is the spend over the last window of at least heartbeat / 4.
+    /// Readings are applied only in origin-time order, so a duplicated, replayed or reordered
+    /// answer changes nothing. It steers refills only: it never enters the books, so a wrong
+    /// reading can cost a wait or park budget on the wrong chain, never exceed the cap.
+    struct Meter {
+        uint64 day;
+        uint64 ts;
+        uint128 spent;
+        uint64 fromTs;
+        uint128 fromSpent;
+        /// budget-token units per hour
+        uint128 rateH;
+    }
+
     /// Work bounds per call (one react()): at most MAX_SENDS callback requests, and at most SCAN
     /// entries of each retry list looked at; the rest is carried to the next call (Cron tick or
     /// event). STOP/unstop messages go first. Gas measured in test/Gas.t.sol.
@@ -132,6 +157,9 @@ abstract contract BudgetCore {
     uint256 public immutable keepFloor;
     uint64 public immutable pregrantWindow;
     uint64 public immutable heartbeat;
+    uint32 public immutable refillHorizon;
+    uint32 public immutable refillLead;
+    uint32 public immutable reclaimLead;
 
     uint256 public cap;
     uint64 public capNonce;
@@ -178,6 +206,11 @@ abstract contract BudgetCore {
     mapping(uint8 => uint64) internal _beatDue;
     /// chain => its unanswered grant (at most one), 0 if none
     mapping(uint8 => uint256) internal _inflightId;
+    mapping(uint8 => Meter) public meter;
+    /// chain => when refill ahead last asked it for a reading
+    mapping(uint8 => uint64) internal _readAskedAt;
+    /// chain => entries in the pending list (returns not yet confirmed)
+    mapping(uint8 => uint256) internal _pendingOf;
 
     event DayOpened(uint64 day, uint256 cap);
     event GrantSent(uint256 id, uint8 chain, uint64 day, uint256 amount, uint64 epoch);
@@ -186,6 +219,9 @@ abstract contract BudgetCore {
     event Credited(uint8 kind, uint8 chain, uint64 day, uint256 amount);
     event Frozen(uint64 epoch);
     event Unfrozen(uint64 epoch);
+    /// Refill ahead acted: kind 1 = a top-up granted ahead, 2 = a reclaim sent ahead (for the
+    /// dashboard and the tests; the grant or reclaim itself is the usual GrantSent / ReclaimSent).
+    event Ahead(uint8 kind, uint8 chain, uint256 amount, uint256 rateH);
 
     constructor(Params memory p) {
         // STOP reaches every chain in the same call: one epoch message per chain fits the budget.
@@ -199,6 +235,10 @@ abstract contract BudgetCore {
         }
         pregrantWindow = p.pregrantWindow;
         heartbeat = p.heartbeat;
+        refillHorizon = p.refillHorizon;
+        refillLead = p.refillLead;
+        reclaimLead = p.reclaimLead;
+        require(p.refillHorizon == 0 || p.reclaimLead > p.refillLead, "reclaimLead must exceed refillLead");
         for (uint8 c; c < p.nChains; c++) {
             _beatDue[c] = uint64(block.timestamp) + uint64(c) * p.heartbeat / p.nChains; // staggered
         }
@@ -219,10 +259,11 @@ abstract contract BudgetCore {
         _poke();
     }
 
-    function _onLowWater(uint8 c, uint64 day) internal {
+    function _onLowWater(uint8 c, uint64 day, uint256 unspent, uint64 ts) internal {
         _alive(c, false);
         if (!frozen && day == _today()) {
             if (!_wanting(c, day)) want[c] = Want(day, uint64(block.timestamp), uint128(cap / 10));
+            _readAtLowWater(c, day, unspent, ts);
         }
         _poke();
     }
@@ -304,6 +345,7 @@ abstract contract BudgetCore {
 
     function _onVerified(uint8 c, Echo memory v) internal {
         _alive(c, true);
+        if (v.kind == K_EPOCH) _read(c, v.day, v.a1, v.ts);
         bytes32 k = _key(v.kind, c, v.key);
         Pending storage p = pending[k];
         if (p.kind != 0) {
@@ -487,6 +529,182 @@ abstract contract BudgetCore {
 
         // 6. serve the waiting list
         _serve(t);
+
+        // 7. refill ahead by burn rate, with whatever sends are left
+        _refillAhead(t);
+    }
+
+    /// Refill ahead by burn rate. For each chain whose meter shows it burning at least a chunk
+    /// within reclaimLead, project when its allowance for today runs out (held minus spent at the
+    /// last reading minus rate x elapsed). Acting only on a fresh reading (asked for if needed):
+    ///  - within `refillLead` of that: top it up from the pool by `refillHorizon` of its rate (at
+    ///    least one chunk), on this react, before its agent is refused;
+    ///  - within `reclaimLead` of that, if the pool can't give that top-up: start the donor path
+    ///    now (it takes the confirmation wait plus up to two Cron periods), one reclaim per react
+    ///    from the chain with the most slack beyond its floor, one chunk and its own projected need
+    ///    (read fresh first as well: an agent that just got busy may not have a rate yet).
+    /// Slower chains are left to the reactive path, as in W2. A chain projected dry that isn't
+    /// asking gets nothing here: its agent has slowed or stopped, and a real shortfall arrives as
+    /// a Short that _serve answers. A chain that is asking (its want is live) is served by _serve.
+    /// Every grant and reclaim goes through _grant / _sendReclaim, after the frozen return: the
+    /// books, rules 1-6, the one-unanswered-grant rule and the STOP epochs hold as before.
+    function _refillAhead(uint64 t) internal virtual {
+        if (refillHorizon == 0) return;
+        DayBook storage b = _days[t];
+        uint256 chunk = b.cap / 10;
+        uint256 owed; // the top-ups due within reclaimLead that the pool can't give
+        uint256 needy; // bit per chain inside its reclaimLead (no donor)
+        for (uint8 c; c < nChains; c++) {
+            uint256 r = _rate(c);
+            // Only a chain fast enough to burn a chunk within reclaimLead. A slower one is served
+            // in time by the reactive path (LowWater -> top-up in seconds; the donor path starts
+            // while its cushion lasts), and a chunk-sized top-up would park budget on it for hours.
+            if (!_fastEnough(r, chunk) || _wanting(c, t)) continue;
+            uint256 left = _leftAt(c, t, r);
+            // Projected dry but not asking: the agent slowed or stopped (a chain that is really
+            // out asks, and _serve answers it). Refilling it would park budget on an idle chain.
+            if (left == 0 || left >= r * reclaimLead / 1 hours) continue;
+            // Read before refilling: act only on a reading younger than refillLead / 4, so a
+            // burst that has ended doesn't get another hour of its rate. The answer is a react of
+            // its own a few seconds later, which comes back here.
+            if (!_freshReading(c)) {
+                if (!_canSend()) return;
+                _askReading(c);
+                continue;
+            }
+            needy |= 1 << c;
+            uint256 size = r * refillHorizon / 1 hours;
+            if (size < chunk) size = chunk;
+            if (_refillDue(left, r) && b.pool > 0 && _inflightFree(c)) {
+                if (!_canSend()) return;
+                uint256 give = size < b.pool ? size : b.pool;
+                emit Ahead(1, c, give, r);
+                _grant(c, t, give);
+                size -= give;
+            }
+            owed += size;
+        }
+        if (owed <= b.pool) return;
+        owed -= b.pool;
+        // The donor path, ahead: one reclaim per react, from the chain with the most slack. Being
+        // speculative, it is gentler than a reclaim for a chain that is asking (which may take a
+        // donor down to its floor): a donor keeps its floor, one chunk for its own next calls, and
+        // its own projected need until the donor path could refill it.
+        uint8 best = type(uint8).max;
+        uint256 bestSlack;
+        for (uint8 j; j < nChains; j++) {
+            if (needy & (1 << j) != 0 || _askedRecently(j, t)) continue;
+            if (openReclaim[j][t] != 0 || b.dry[j]) continue;
+            uint256 r = _rate(j);
+            uint256 keep = keepFloor + chunk + _donorNeed(r);
+            uint256 left = _leftAt(j, t, r);
+            if (left > keep && left - keep > bestSlack) {
+                best = j;
+                bestSlack = left - keep;
+            }
+        }
+        if (best == type(uint8).max || !_canSend()) return;
+        // Read before taking, too: a donor whose agent just got busy may not have a rate yet.
+        if (!_freshReading(best)) return _askReading(best);
+        uint256 amt = bestSlack < owed ? bestSlack : owed;
+        emit Ahead(2, best, amt, _rate(best));
+        _sendReclaim(best, t, amt);
+    }
+
+    /// A reading of chain c recent enough to refill on (younger than refillLead / 4, origin time).
+    function _freshReading(uint8 c) internal view returns (bool) {
+        return block.timestamp <= uint256(meter[c].ts) + refillLead / 4;
+    }
+
+    /// Ask chain c for a meter reading now (a heartbeat re-read, so it also carries a lost STOP
+    /// press back), at most once per re-read timeout.
+    function _askReading(uint8 c) internal {
+        uint64 nowTs = uint64(block.timestamp);
+        if (nowTs < _readAskedAt[c] + _cp[c].verifyTimeout) return;
+        _readAskedAt[c] = nowTs;
+        _beat(c, nowTs);
+    }
+
+    function _fastEnough(uint256 rateH, uint256 chunk) internal view virtual returns (bool) {
+        return rateH != 0 && rateH * reclaimLead / 1 hours >= chunk;
+    }
+
+    /// The top-up goes out once the projected unspent covers less than refillLead of spending.
+    function _refillDue(uint256 left, uint256 rateH) internal view virtual returns (bool) {
+        return left < rateH * refillLead / 1 hours;
+    }
+
+    /// What an active donor keeps beyond the floor: its own projected spending until the donor
+    /// path could bring budget back, so feeding one chain doesn't starve another (anti ping-pong
+    /// for chains that never ask because they are refilled ahead).
+    function _donorNeed(uint256 rateH) internal view virtual returns (uint256) {
+        return rateH * (uint256(reclaimLead) + refillHorizon) / 1 hours;
+    }
+
+    /// A chain's spend rate (units per hour), or 0 if it has no reading younger than 3 heartbeats.
+    function _rate(uint8 c) internal view returns (uint256) {
+        Meter storage m = meter[c];
+        if (block.timestamp > uint256(m.ts) + 3 * uint256(heartbeat)) return 0;
+        return m.rateH;
+    }
+
+    /// Projected unspent allowance of chain c for day t: held, minus spent at the last reading of
+    /// day t (or 0 at its midnight), minus the rate over the time since.
+    function _leftAt(uint8 c, uint64 t, uint256 rateH) internal view returns (uint256) {
+        Meter storage m = meter[c];
+        uint256 spent;
+        uint256 since = uint256(t) * DAY;
+        if (m.day == t) {
+            spent = m.spent;
+            if (m.ts > since) since = m.ts;
+        }
+        if (block.timestamp > since) spent += rateH * (block.timestamp - since) / 1 hours;
+        uint256 h = _days[t].held[c];
+        return h > spent ? h - spent : 0;
+    }
+
+    /// A LowWater is a reading too, the moment it matters most: spent = held - unspent, exact when
+    /// the chain has no unanswered grant, no open reclaim and no unconfirmed return (then held is
+    /// exactly the wallet's allowance for the day). Otherwise it only asks.
+    function _readAtLowWater(uint8 c, uint64 day, uint256 unspent, uint64 ts) internal {
+        if (refillHorizon == 0 || inflight[c] != 0 || _pendingOf[c] != 0 || openReclaim[c][day] != 0) return;
+        uint256 h = _days[day].held[c];
+        if (h >= unspent) _read(c, day, h - unspent, ts);
+    }
+
+    /// A meter reading, applied only if newer (origin time) than the last one.
+    function _read(uint8 c, uint64 day, uint256 spent, uint64 ts) internal virtual {
+        Meter storage m = meter[c];
+        if (!_newerReading(m, day, ts) || spent > type(uint128).max) return;
+        if (m.ts == 0) {
+            // the very first reading: a basis, no rate yet
+            m.fromTs = ts;
+            m.fromSpent = uint128(spent);
+        } else if (day != m.day) {
+            // the first reading of a new day: its window starts at that day's midnight, spent 0
+            m.fromTs = uint64(uint256(day) * DAY);
+            m.fromSpent = 0;
+        }
+        m.day = day;
+        m.ts = ts;
+        m.spent = uint128(spent);
+        if (spent < m.fromSpent) {
+            // below the window's start (an earlier reading was high): restart the window here
+            m.fromTs = ts;
+            m.fromSpent = uint128(spent);
+            return;
+        }
+        uint256 window = heartbeat / 4 > 60 ? heartbeat / 4 : 60;
+        if (ts >= uint256(m.fromTs) + window) {
+            uint256 rate = (spent - m.fromSpent) * 1 hours / (ts - m.fromTs);
+            m.rateH = uint128(rate < MAX_CAP ? rate : MAX_CAP);
+            m.fromTs = ts;
+            m.fromSpent = uint128(spent);
+        }
+    }
+
+    function _newerReading(Meter storage m, uint64 day, uint64 ts) internal view virtual returns (bool) {
+        return day != 0 && day >= m.day && ts > m.ts;
     }
 
     function _serve(uint64 t) internal {
@@ -647,6 +865,7 @@ abstract contract BudgetCore {
         pending[k] = Pending(kind, c, 0, day, ts, 0, id, uint128(a0), uint128(a1));
         _pendingKeys.push(k);
         _pendingPos[k] = _pendingKeys.length;
+        _pendingOf[c]++;
     }
 
     /// The confirmation wait has passed: re-read the fact on the origin chain.
@@ -732,6 +951,8 @@ abstract contract BudgetCore {
         }
         _pendingKeys.pop();
         delete _pendingPos[k];
+        uint8 pc = pending[k].chain;
+        if (_pendingOf[pc] > 0) _pendingOf[pc]--;
         delete pending[k];
     }
 
