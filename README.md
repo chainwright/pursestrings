@@ -8,15 +8,18 @@ For people who let AI agents pay for APIs and services on more than one chain an
 |---|---|---|---|---|
 | Top-up: agent refused on Base, budget granted | [Base `0xe762…b163`](https://base-sepolia.blockscout.com/tx/0xe7629c982f59b7f4e7401b7ede1391e2c6f244d181d8911bf95f7ade7deeb163) | [`0x0c12…fe7a`](https://lasna.reactscan.net/tx/0x0c12f2abf867f4f12519ebdfeace2c2357e0ed2f6df093956ac51541cf42fe7a) | [GrantApplied, Base `0x923a…f62c`](https://base-sepolia.blockscout.com/tx/0x923a57c6b9edc7df74c9144e6698dc6fd6535d029c875d383a937b9f2360f62c) | 1 s |
 | STOP pressed on Base, both chains frozen | [Base `0x9a41…cbda`](https://base-sepolia.blockscout.com/tx/0x9a41353d38e611b3ea6e4739e784844088304162ac6c6d0e4e9d5e4fa8e7cbda) | [`0x23ba…44fc`](https://lasna.reactscan.net/tx/0x23bab0c180052f0133313842320b5d6d23d86c547b812a921c3d3aab269c44fc) | [Base `0x54e8…5205`](https://base-sepolia.blockscout.com/tx/0x54e8194c99f1f7589004c2c4eaf5176bce43c60bce12009604fbc5c768205026), [Unichain `0x821d…3eea`](https://sepolia.uniscan.xyz/tx/0x821d90dc68b6143b8581202205bf2c55fbb3de66fc9704249278d36b69b93eea) | 3 s |
-| Donor: budget moved from Unichain to Base | [Base `0x6a8f…2b62`](https://base-sepolia.blockscout.com/tx/0x6a8f115cb141ef68124717b9af493a3e333578a23a0f0b502c271a72ffcd2b62) | [`0x4549…14bb`](https://lasna.reactscan.net/tx/0x4549903286455dda6be4ec54e7b9e9465534b5859ef5089004f1ff313fd314bb), [`0xfa5c…1a8f`](https://lasna.reactscan.net/tx/0xfa5c7b2d46f83f90fcd59926b194475eadd2f314fa0ad1045e718e8fedac1a8f) | [reclaim, Unichain `0xe3dd…1d39`](https://sepolia.uniscan.xyz/tx/0xe3ddec4724171323ee70f7e7662b6ddba34e5e85e3e4626a9a00df174f081d39), [GrantApplied, Base `0xfb1d…eca5`](https://base-sepolia.blockscout.com/tx/0xfb1d78dbc1da727b6b5c44d20fa277b8bbff4412c828015e04b6fcd690eeeca5) | 31 min |
-
-Answers reach our contracts through Reactive Network's callback proxies (`0x476F…3585` on Base Sepolia, `0x775c…66C1` on Unichain Sepolia), so an explorer shows Reactive's relayer as the sender. Almost all of the donor loop's 31 min is our deliberate 30-min L2 confirmation wait.
+| Donor: budget moved from Unichain to Base | [Base `0x6a8f…2b62`](https://base-sepolia.blockscout.com/tx/0x6a8f115cb141ef68124717b9af493a3e333578a23a0f0b502c271a72ffcd2b62) | [`0x4549…14bb`](https://lasna.reactscan.net/tx/0x4549903286455dda6be4ec54e7b9e9465534b5859ef5089004f1ff313fd314bb), [`0xfa5c…1a8f`](https://lasna.reactscan.net/tx/0xfa5c7b2d46f83f90fcd59926b194475eadd2f314fa0ad1045e718e8fedac1a8f) | [reclaim, Unichain `0xe3dd…1d39`](https://sepolia.uniscan.xyz/tx/0xe3ddec4724171323ee70f7e7662b6ddba34e5e85e3e4626a9a00df174f081d39), [GrantApplied, Base `0xfb1d…eca5`](https://base-sepolia.blockscout.com/tx/0xfb1d78dbc1da727b6b5c44d20fa277b8bbff4412c828015e04b6fcd690eeeca5) | 31 min (30 of them our deliberate L2 confirmation wait) |
 
 **Verify in 5 minutes** (no key, no transaction):
-1. Open the links above: each answer is in a block seconds after its origin.
-2. `python3 script/checker.py` sums every USDC transfer out of the wallets per UTC day from the token's own logs (Python standard library, public RPCs, ~2 min) and prints `Over: $0.00`.
-3. `deployments/README.md` links each of the 8 contracts to its Sourcify exact match.
-4. Offline: `forge test` (~75–100 s; 86 tests on this branch, 67 on `main`) and `script/dryrun.sh` (the whole deployment and the loops on three local anvils).
+1. Open the links above. The top-up and STOP answers sit in blocks seconds after their origin; the donor's comes after the 30-min wait. Their sender is Reactive Network's callback proxy (`0x476F…3585` on Base Sepolia, `0x775c…66C1` on Unichain Sepolia), which calls our contracts.
+2. `deployments/README.md` links each of the 8 contracts to its Sourcify exact match.
+3. Run:
+```
+git clone --recurse-submodules -b w3-final https://github.com/chainwright/pursestrings && cd pursestrings
+python3 script/checker.py --day 2026-11-09   # read-only, public RPCs, ~2 min: $17.00 out on Base, cap $20, "Over: $0.00"
+forge test                                   # offline, ~75–100 s, 86 tests on this branch (67 on main)
+script/dryrun.sh                             # offline: the deployment and the loops on three local anvils
+```
 
 ## Status (09.11.2026)
 

@@ -64,3 +64,21 @@ Tested by fuzz + mutation (not proven), against our own model of the network.
   (0.75–1.3e-6 by path, 09.11 series; the front's 0.002 ETH reserve was 0.0019739 after ~35
   callbacks on 07.11).
 - Fees never come out of the budget token.
+
+## Source comments to fix at the final redeploy
+
+The live contracts (07.11) are source-verified on Sourcify with an exact match, so `src/` on
+`main` stays byte-identical to what was deployed, comments included: editing a comment changes the
+metadata hash and the match would drop to partial. These comments on `main` are therefore left
+out of date on purpose:
+- `src/reactive/PursestringsReactive.sol:16-17` says "Not yet run against the real system
+  contract"; it has run on Lasna since 07.11.2026.
+- `src/reactive/TestnetConfig.sol:8` says "Nothing here has been deployed yet"; it has, on
+  07.11.2026.
+- `PursestringsReactive.sol:19` and `TestnetConfig.sol:7` cite "DOCS_BRIEF", our notes on
+  Reactive's docs, which are not in this repo.
+
+On this branch (`w3-final`, not deployed) they are fixed: the comments say the contracts have run on
+Lasna since 07.11.2026 from branch `main`, and cite Reactive's docs. If this branch is redeployed for
+judging, that date and branch are set to the new deploy first, and the new addresses are verified on
+Sourcify again. `main`'s comments are not changed in place.
