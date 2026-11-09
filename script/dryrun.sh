@@ -128,6 +128,12 @@ rc=$?
 set -e
 if [ "$rc" != 2 ]; then tail -5 cache/dryrun/agent_timeout.out; echo "FAILED: unserved ask must exit 2 (got $rc)"; exit 1; fi
 echo "   not served before its timeout: exit 2, as the run book expects"
+python3 script/loop_logger.py paid-sum --chain unichain --from-block 0 | python3 -c '
+import json, sys
+r = json.loads(sys.stdin.read())
+assert r["payments"] == 1 and list(r["paidPerDay"].values()) == [1.0], r
+print("   checker (paid-sum): Unichain Sepolia paid", r["paidPerDay"], "in", r["payments"], "payment")
+' || { echo "FAILED: paid-sum"; exit 1; }
 
 origin="$(python3 script/dryrun_relay.py stop)"
 python3 script/loop_logger.py trace --path stop --chain unichain --tx "$origin" --timeout-min 0.5 | check_trace 2

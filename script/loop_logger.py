@@ -10,6 +10,8 @@ printed) and the deployed addresses from DEPLOYMENTS_FILE (default deployments/l
     loop_logger.py trace --path stop  --chain base --tx 0x...   # after `Loop.s.sol stop`
     loop_logger.py summary                                      # median / p95 per path
     loop_logger.py last-tx --fn pay --chain base                # hash of the last Loop.s.sol call
+    loop_logger.py cron-check [--block N]                       # is the coordinator getting Cron ticks?
+    loop_logger.py paid-sum --chain base --from-block N         # the checker: Paid summed per day
 
 How a loop is matched (one loop at a time; not in the 2 h before 00:00 UTC, when pre-grants run):
   1. the coordinator event on Lasna that this path must produce:
@@ -125,17 +127,17 @@ def receipt(tx, env):
 LOGS_CHUNK = int(os.environ.get("LOGS_CHUNK", "500"))
 
 
-def logs(rc, sig, from_block):
-    """Coordinator logs from from_block to the head, fetched in chunks: public RPCs cap the
+def logs(rc, sig, from_block, env="LASNA_RPC_URL", chunk=None):
+    """Logs of contract rc (default: the coordinator, on Lasna) from from_block to the head, fetched in chunks: public RPCs cap the
     eth_getLogs block range (Base Sepolia: 200), and a donor loop can span ~8,000 Lasna blocks.
     A refused chunk is halved and retried, down to 25 blocks."""
-    head = int(cast("block-number", env="LASNA_RPC_URL"))
-    res, start, size = [], from_block, LOGS_CHUNK
+    head = int(cast("block-number", env=env))
+    res, start, size = [], from_block, chunk or LOGS_CHUNK
     while start <= head:
         end = min(head, start + size - 1)
         try:
             out = cast("logs", "--json", "--from-block", str(start), "--to-block", str(end), "--address", rc, sig,
-                       env="LASNA_RPC_URL")
+                       env=env)
         except RuntimeError:
             if size <= 25:
                 raise
@@ -452,6 +454,67 @@ def summary(_):
               f"callbacks {len(cbs)} (formula mean {statistics.mean(cbs) / 1e18 if cbs else 0:.8f} ETH)")
 
 
+def ours_in_block(block, rc):
+    """Reactive txs for the coordinator in a full Lasna block (cast block --full --json): txs to
+    the system contract whose input names the coordinator. Pure, for the tests."""
+    me = rc.lower().removeprefix("0x")
+    return [t["hash"] for t in block.get("transactions", [])
+            if isinstance(t, dict) and (t.get("to") or "").lower() == SYSTEM and me in (t.get("input") or "").lower()]
+
+
+def next_tick(n):
+    """The first Cron1000 tick block at or after block n (ticks land in blocks k*1000 + 1)."""
+    return ((n - 1 + 999) // 1000) * 1000 + 1
+
+
+def cron_check(a):
+    """Read-only: is the coordinator receiving Cron ticks? Waits for the next tick block (or reads
+    --block), and reports our reactive tx in it, its gas, and the reserves before and after."""
+    dep = json.load(open(os.environ.get("DEPLOYMENTS_FILE", "deployments/latest.json")))
+    rc = dep["coordinator"]
+
+    def reserves():
+        return int(cast("call", SYSTEM, "reserves(address)(uint256)", rc, env="LASNA_RPC_URL").split()[0])
+
+    def debt():
+        return int(cast("call", SYSTEM, "debt(address)(uint256)", rc, env="LASNA_RPC_URL").split()[0])
+
+    r0, d0 = reserves(), debt()
+    n = a.block or next_tick(int(cast("block-number", env="LASNA_RPC_URL")))
+    deadline = time.time() + a.wait_min * 60
+    while int(cast("block-number", env="LASNA_RPC_URL")) < n + 2:
+        if time.time() >= deadline:
+            sys.exit(f"tick block {n} not reached within {a.wait_min} min")
+        time.sleep(POLL)
+    blk = json.loads(cast("block", str(n), "--full", "--json", env="LASNA_RPC_URL"))
+    hits = ours_in_block(blk, rc)
+    gas = [h(json.loads(cast("receipt", tx, "--json", env="LASNA_RPC_URL"))["gasUsed"]) for tx in hits]
+    r1, d1 = reserves(), debt()
+    print(json.dumps({"tickBlock": n, "blockTs": h(blk["timestamp"]), "ourReactiveTxs": hits, "gasUsed": gas,
+                      "reservesBefore": r0 / 1e18, "reservesAfter": r1 / 1e18, "debtBefore": d0 / 1e18,
+                      "debtAfter": d1 / 1e18}, indent=1))
+    if not hits:
+        sys.exit("no reactive tx for the coordinator in the tick block: it is not receiving Cron")
+
+
+def paid_sum(a):
+    """Read-only checker: every Paid event of the chain's wallet from --from-block to the head,
+    summed per UTC day (the wallet's day). The series passes if each day's sum over both chains is
+    <= the day's cap. Prints one JSON object."""
+    dep = json.load(open(os.environ.get("DEPLOYMENTS_FILE", "deployments/latest.json")))
+    env, _, _ = CHAINS[a.chain]
+    wallet = dep[a.chain]["wallet"]
+    per_day, n = {}, 0
+    # 200 blocks per call: Base Sepolia's public RPC refuses more, and a refusal costs ~20 s
+    l2_chunk = int(os.environ.get("L2_LOGS_CHUNK", "200"))
+    for lg in logs(wallet, "Paid(bytes32,address,uint256,uint64,uint64)", a.from_block, env=env, chunk=l2_chunk):
+        amount, day, _epoch = words(lg["data"])[:3]
+        per_day[day] = per_day.get(day, 0) + amount
+        n += 1
+    print(json.dumps({"chain": a.chain, "wallet": wallet, "fromBlock": a.from_block, "payments": n,
+                      "paidPerDay": {str(d): v / 1e6 for d, v in sorted(per_day.items())}}))
+
+
 def last_tx(a):
     _, chain_id, _ = CHAINS[a.chain]
     root = os.environ.get("FOUNDRY_BROADCAST", "broadcast")
@@ -479,6 +542,14 @@ def main():
     lt.add_argument("--fn", dest="script_fn", required=True, help="the Loop.s.sol function, e.g. pay or stop")
     lt.add_argument("--chain", choices=list(CHAINS), required=True)
     lt.set_defaults(fn=last_tx)
+    cc = sub.add_parser("cron-check", help="read-only: does the next Cron tick block hold our reactive tx?")
+    cc.add_argument("--block", type=int, default=0, help="a past tick block instead of waiting for the next")
+    cc.add_argument("--wait-min", type=float, default=20)
+    cc.set_defaults(fn=cron_check)
+    ps = sub.add_parser("paid-sum", help="read-only: the wallet's Paid events summed per day")
+    ps.add_argument("--chain", choices=list(CHAINS), required=True)
+    ps.add_argument("--from-block", type=int, required=True)
+    ps.set_defaults(fn=paid_sum)
     a = ap.parse_args()
     a.fn(a)
 

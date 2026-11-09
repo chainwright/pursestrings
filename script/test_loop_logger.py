@@ -135,5 +135,21 @@ class Summary(unittest.TestCase):
         self.assertIn("stop: runs 1, complete 1", out)
 
 
+class Cron(unittest.TestCase):
+    def test_next_tick(self):
+        self.assertEqual(L.next_tick(7_890_001), 7_890_001)
+        self.assertEqual(L.next_tick(7_890_002), 7_891_001)
+        self.assertEqual(L.next_tick(7_891_000), 7_891_001)
+
+    def test_ours_in_block(self):
+        rc = "0x7B8111CDF7001721469c584Fa9613369F0E7aC1E"
+        blk = {"transactions": [
+            {"hash": "0xours", "to": L.SYSTEM, "input": "0xcebbda8d" + "00" * 12 + rc[2:].lower()},
+            {"hash": "0xother", "to": L.SYSTEM, "input": "0xcebbda8d" + "11" * 32},
+            {"hash": "0xelse", "to": "0x" + "12" * 20, "input": rc.lower()},
+        ]}
+        self.assertEqual(L.ours_in_block(blk, rc), ["0xours"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
