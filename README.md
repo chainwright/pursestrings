@@ -6,6 +6,8 @@ For people who let AI agents pay for APIs and services on more than one chain an
 
 **See it:** [pursestrings-dashboard.netlify.app](https://pursestrings-dashboard.netlify.app) replays the real transactions recorded on 9 Nov 2026 (labelled as a replay; hold STOP to watch both chains freeze).
 
+**Video (2:28):** [youtu.be/ZyAuvW-op7w](https://youtu.be/ZyAuvW-op7w): every step is a real testnet transaction from 10 Nov 2026; the hashes are in [live/VIDEO_2026-11-10.md](live/VIDEO_2026-11-10.md).
+
 | Live loop (testnet, 09.11.2026) | Origin | Reactive tx on Lasna | Answer on the destination chain | Took |
 |---|---|---|---|---|
 | Top-up: agent refused on Base, budget granted | [Base `0xe762…b163`](https://base-sepolia.blockscout.com/tx/0xe7629c982f59b7f4e7401b7ede1391e2c6f244d181d8911bf95f7ade7deeb163) | [`0x0c12…fe7a`](https://lasna.reactscan.net/tx/0x0c12f2abf867f4f12519ebdfeace2c2357e0ed2f6df093956ac51541cf42fe7a) | [GrantApplied, Base `0x923a…f62c`](https://base-sepolia.blockscout.com/tx/0x923a57c6b9edc7df74c9144e6698dc6fd6535d029c875d383a937b9f2360f62c) | 1 s |
@@ -27,11 +29,12 @@ script/dryrun.sh                             # offline: the deployment and the l
 
 Deployed on testnets on 07.11.2026 from branch `main` (`src/` unchanged there since the deploy commit `0a2e273`): the coordinator on Lasna; a wallet, a vault and a callback front on Base Sepolia and on Unichain Sepolia; the owner console on Base Sepolia. Addresses, creation hashes and source verification: `deployments/README.md`. The smoke test on 07.11 answered one top-up and one STOP on-chain 2 s after each origin (`live/LIVE_RUN_2026-11-07.md`). On 09.11 UTC the compact live series ran in full (`live/SERIES_2026-11-09.md`, every hash):
 - 10 top-up loops: all complete, median 2 s, p95 3 s;
-- 3 donor loops: all complete, 30.4 min median (31.2 max) with the agent retrying every 5 min, almost all of it our deliberate 30-min L2 confirmation wait;
+- 3 donor loops: all complete, 30.4 min median (31.2 max) with the agent retrying every 5 min, almost all of it a fixed 30-min wait, a safety margin we chose;
 - 5 STOP presses: both chains frozen, median 2 s, p95 3 s;
 - 12 successful agent payments, $17 in all, under the $20 daily cap (paid to our own deployer address).
+- Video recording, 10.11.2026 UTC: payee `0x3e5F9f00258633dB9DBFbB62132708e01875b1ae` (team-held, standing in for an API seller): 10 top-ups (median 2 s), 1 donor loop (31 min), 2 STOP presses (2 s) and one STOP pressed while the coordinator was paused (frozen everywhere 2 min 9 s after one deposit); $13 paid, Over $0.00. Every hash: `live/VIDEO_2026-11-10.md`.
 
-The coordinator then used up its reserve and has been paused since 09.11 09:15 UTC (debt 0.0142 lREACT; see "If the coordinator looks inactive" below). This deployment of 07.11.2026 (`main`) is the judged one: there is no redeploy for judging. It will be funded again before the demo video is recorded, and kept funded from submission until results.
+After the 09.11 series the coordinator used up its reserve and was paused from 09.11 09:15 UTC. It was funded again for the demo-video session on 10.11.2026 (3.5 lREACT in two deposits; `live/VIDEO_2026-11-10.md`). At 02:56 UTC on 10.11 its reserve was 0.12 lREACT; when that runs out it pauses again, in the safe state described under "If the coordinator looks inactive" below, until the next deposit. This deployment of 07.11.2026 (`main`) is the judged one: there is no redeploy for judging. It will be kept funded from submission until results; the lREACT for that is being collected through the faucet.
 
 **Not deployed yet (w3-final): this branch** holds the next version of the code (`live/W3_2026-11-09.md`), not the judged deployment: refill ahead by burn rate, the idle heartbeat and the `flush()` sweep below. The live contracts run `main`, which is what Sourcify verifies; none of these changes is live.
 
@@ -213,9 +216,10 @@ Not deployed yet (w3-final): anyone can also call `flush()` on a wallet while th
 paused. It sweeps yesterday's leftover allowance and returns it to the vault, with no agent payment
 and no coordinator message (the deployed wallets don't sweep in `flush()`).
 
-The current deployment has been paused since 09.11 09:15 UTC (debt 0.0142 lREACT). It is the judged
-deployment (07.11.2026, `main`), with no redeploy for judging. Plan for the judging window: it is
-funded again before the demo video is recorded, and kept funded from submission until results. At the measured ≈ 2.9 lREACT a day
+The current deployment is the judged one (07.11.2026, `main`), with no redeploy for judging. It was
+paused from 09.11 09:15 UTC, funded again for the demo-video session on 10.11.2026 (3.5 lREACT), and
+is left to run its reserve down (0.12 lREACT at 02:56 UTC on 10.11) and pause again at no cost. Plan
+for the judging window: kept funded from submission until results. At the measured ≈ 2.9 lREACT a day
 (100 gwei), 05.12 to late December is ≈ 26 days ≈ 75 lREACT idle, plus ≈ 0.6 per STOP cycle
 (≈ 0.75 Sepolia ETH through the faucet). We deposit ≈ 6 lREACT every two days, never far ahead,
 because reserves can't be withdrawn, and check after each deposit that the next tick carries our
