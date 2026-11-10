@@ -30,6 +30,7 @@ Deployed on testnets on 07.11.2026 from this branch (`main`; `src/` unchanged si
 - 3 donor loops: all complete, 30.4 min median (31.2 max) with the agent retrying every 5 min, almost all of it our deliberate 30-min L2 confirmation wait;
 - 5 STOP presses: both chains frozen, median 2 s, p95 3 s;
 - 12 successful agent payments, $17 in all, under the $20 daily cap (paid to our own deployer address).
+- Video recording, 10.11.2026 UTC: payee `0x3e5F9f00258633dB9DBFbB62132708e01875b1ae` (team-held, standing in for an API seller): 10 top-ups (median 2 s), 1 donor loop (31 min), 2 STOP presses (2 s) and one STOP pressed while the coordinator was paused (frozen everywhere 2 min 9 s after one deposit); $13 paid, Over $0.00. Every hash: `live/VIDEO_2026-11-10.md`.
 
 The coordinator then used up its reserve and has been paused since 09.11 09:15 UTC (debt 0.0142 lREACT; see "If the coordinator looks inactive" below). This deployment of 07.11.2026 (`main`) is the judged one: there is no redeploy for judging. It will be funded again before the demo video is recorded, and kept funded from submission until results.
 
