@@ -27,7 +27,7 @@ script/dryrun.sh                             # offline: the deployment and the l
 
 Deployed on testnets on 07.11.2026 from this branch (`main`; `src/` unchanged since the deploy commit `0a2e273`): the coordinator on Lasna; a wallet, a vault and a callback front on Base Sepolia and on Unichain Sepolia; the owner console on Base Sepolia. Addresses, creation hashes and source verification: `deployments/README.md`. The smoke test on 07.11 answered one top-up and one STOP on-chain 2 s after each origin (`live/LIVE_RUN_2026-11-07.md`). On 09.11 UTC the compact live series ran in full (`live/SERIES_2026-11-09.md`, every hash):
 - 10 top-up loops: all complete, median 2 s, p95 3 s;
-- 3 donor loops: all complete, 30.4 min median (31.2 max) with the agent retrying every 5 min, almost all of it our deliberate 30-min L2 confirmation wait;
+- 3 donor loops: all complete, 30.4 min median (31.2 max) with the agent retrying every 5 min, almost all of it a fixed 30-min wait, a safety margin we chose;
 - 5 STOP presses: both chains frozen, median 2 s, p95 3 s;
 - 12 successful agent payments, $17 in all, under the $20 daily cap (paid to our own deployer address).
 - Video recording, 10.11.2026 UTC: payee `0x3e5F9f00258633dB9DBFbB62132708e01875b1ae` (team-held, standing in for an API seller): 10 top-ups (median 2 s), 1 donor loop (31 min), 2 STOP presses (2 s) and one STOP pressed while the coordinator was paused (frozen everywhere 2 min 9 s after one deposit); $13 paid, Over $0.00. Every hash: `live/VIDEO_2026-11-10.md`.
