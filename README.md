@@ -1,17 +1,17 @@
 # Pursestrings
 
-**One daily allowance shared by your agents' wallets across chains:** one agent wallet per chain, live on Base Sepolia and Unichain Sepolia, coordinated from Reactive Lasna. Money stays on its own chain (vault to wallet, same chain); only the permission moves. One STOP freezes every chain.
+**One daily allowance shared by your agents' wallets across chains:** one agent wallet per chain, deployed on Base Sepolia and Unichain Sepolia, coordinated from Reactive Lasna (whether the coordinator is funded right now: see Status). Money stays on its own chain (vault to wallet, same chain); only the permission moves. One STOP freezes the chain you press at once and every other chain within seconds (after the next deposit if the coordinator is paused).
 
 For people who let AI agents pay for APIs and services on more than one chain and want one hard daily cap and one STOP that contracts enforce, with no server or custodian of ours in between.
 
 **See it:** [pursestrings-dashboard.netlify.app](https://pursestrings-dashboard.netlify.app) replays the real transactions recorded on 9 Nov 2026 (labelled as a replay; hold STOP to watch both chains freeze).
 
-**Video (2:28):** [youtu.be/ZyAuvW-op7w](https://youtu.be/ZyAuvW-op7w): every step is a real testnet transaction from 10 Nov 2026; the hashes are in [live/VIDEO_2026-11-10.md](live/VIDEO_2026-11-10.md).
+**Video (2:28):** [youtu.be/ZyAuvW-op7w](https://youtu.be/ZyAuvW-op7w): every on-chain step shown is a real testnet transaction from 10 Nov 2026, and the terminal panes are re-typeset from that session's logs; the hashes are in [live/VIDEO_2026-11-10.md](live/VIDEO_2026-11-10.md).
 
 | Live loop (testnet, 09.11.2026) | Origin | Reactive tx on Lasna | Answer on the destination chain | Took |
 |---|---|---|---|---|
 | Top-up: agent refused on Base, budget granted | [Base `0xe762…b163`](https://base-sepolia.blockscout.com/tx/0xe7629c982f59b7f4e7401b7ede1391e2c6f244d181d8911bf95f7ade7deeb163) | [`0x0c12…fe7a`](https://lasna.reactscan.net/tx/0x0c12f2abf867f4f12519ebdfeace2c2357e0ed2f6df093956ac51541cf42fe7a) | [GrantApplied, Base `0x923a…f62c`](https://base-sepolia.blockscout.com/tx/0x923a57c6b9edc7df74c9144e6698dc6fd6535d029c875d383a937b9f2360f62c) | 1 s |
-| STOP pressed on Base, both chains frozen | [Base `0x9a41…cbda`](https://base-sepolia.blockscout.com/tx/0x9a41353d38e611b3ea6e4739e784844088304162ac6c6d0e4e9d5e4fa8e7cbda) | [`0x23ba…44fc`](https://lasna.reactscan.net/tx/0x23bab0c180052f0133313842320b5d6d23d86c547b812a921c3d3aab269c44fc) | [Base `0x54e8…5205`](https://base-sepolia.blockscout.com/tx/0x54e8194c99f1f7589004c2c4eaf5176bce43c60bce12009604fbc5c768205026), [Unichain `0x821d…3eea`](https://sepolia.uniscan.xyz/tx/0x821d90dc68b6143b8581202205bf2c55fbb3de66fc9704249278d36b69b93eea) | 3 s |
+| STOP pressed on Base, both chains frozen | [Base `0x9a41…cbda`](https://base-sepolia.blockscout.com/tx/0x9a41353d38e611b3ea6e4739e784844088304162ac6c6d0e4e9d5e4fa8e7cbda) | [`0x23ba…44fc`](https://lasna.reactscan.net/tx/0x23bab0c180052f0133313842320b5d6d23d86c547b812a921c3d3aab269c44fc) | [Base `0x54e8…5026`](https://base-sepolia.blockscout.com/tx/0x54e8194c99f1f7589004c2c4eaf5176bce43c60bce12009604fbc5c768205026), [Unichain `0x821d…3eea`](https://sepolia.uniscan.xyz/tx/0x821d90dc68b6143b8581202205bf2c55fbb3de66fc9704249278d36b69b93eea) | 3 s |
 | Donor: budget moved from Unichain to Base | [Base `0x6a8f…2b62`](https://base-sepolia.blockscout.com/tx/0x6a8f115cb141ef68124717b9af493a3e333578a23a0f0b502c271a72ffcd2b62) | [`0x4549…14bb`](https://lasna.reactscan.net/tx/0x4549903286455dda6be4ec54e7b9e9465534b5859ef5089004f1ff313fd314bb), [`0xfa5c…1a8f`](https://lasna.reactscan.net/tx/0xfa5c7b2d46f83f90fcd59926b194475eadd2f314fa0ad1045e718e8fedac1a8f) | [reclaim, Unichain `0xe3dd…1d39`](https://sepolia.uniscan.xyz/tx/0xe3ddec4724171323ee70f7e7662b6ddba34e5e85e3e4626a9a00df174f081d39), [GrantApplied, Base `0xfb1d…eca5`](https://base-sepolia.blockscout.com/tx/0xfb1d78dbc1da727b6b5c44d20fa277b8bbff4412c828015e04b6fcd690eeeca5) | 31 min (30 of them our deliberate L2 confirmation wait) |
 
 **Verify in 5 minutes** (no key, no transaction):
@@ -21,11 +21,11 @@ For people who let AI agents pay for APIs and services on more than one chain an
 ```
 git clone --recurse-submodules https://github.com/chainwright/pursestrings && cd pursestrings
 python3 script/checker.py --day 2026-11-09   # read-only, public RPCs, ~2 min: $17.00 out on Base, cap $20, "Over: $0.00"
-forge test                                   # offline, ~75–90 s, 67 tests
+forge test                                   # offline, ~40–90 s, 67 tests
 script/dryrun.sh                             # offline: the deployment and the loops on three local anvils
 ```
 
-## Status (09.11.2026)
+## Status
 
 Deployed on testnets on 07.11.2026 from this branch (`main`; `src/` unchanged since the deploy commit `0a2e273`): the coordinator on Lasna; a wallet, a vault and a callback front on Base Sepolia and on Unichain Sepolia; the owner console on Base Sepolia. Addresses, creation hashes and source verification: `deployments/README.md`. The smoke test on 07.11 answered one top-up and one STOP on-chain 2 s after each origin (`live/LIVE_RUN_2026-11-07.md`). On 09.11 UTC the compact live series ran in full (`live/SERIES_2026-11-09.md`, every hash):
 - 10 top-up loops: all complete, median 2 s, p95 3 s;
@@ -34,13 +34,13 @@ Deployed on testnets on 07.11.2026 from this branch (`main`; `src/` unchanged si
 - 12 successful agent payments, $17 in all, under the $20 daily cap (paid to our own deployer address).
 - Video recording, 10.11.2026 UTC: payee `0x3e5F9f00258633dB9DBFbB62132708e01875b1ae` (team-held, standing in for an API seller): 10 top-ups (median 2 s), 1 donor loop (31 min), 2 STOP presses (2 s) and one STOP pressed while the coordinator was paused (frozen everywhere 2 min 9 s after one deposit); $13 paid, Over $0.00. Every hash: `live/VIDEO_2026-11-10.md`.
 
-After the 09.11 series the coordinator used up its reserve and was paused from 09.11 09:15 UTC. It was funded again for the demo-video session on 10.11.2026 (3.5 lREACT in two deposits; `live/VIDEO_2026-11-10.md`). At 02:56 UTC on 10.11 its reserve was 0.12 lREACT; when that runs out it pauses again, in the safe state described under "If the coordinator looks inactive" below, until the next deposit. This deployment of 07.11.2026 (`main`) is the judged one: there is no redeploy for judging. It will be kept funded from submission until results; the lREACT for that is being collected through the faucet.
+After the 09.11 series the coordinator used up its reserve and was paused from 09.11 09:15 UTC. It was funded again for the demo-video session on 10.11.2026 (3.5 lREACT in two deposits; `live/VIDEO_2026-11-10.md`). At 02:30 UTC on 10.11 its reserve was 0.135 lREACT; when that ran out it paused again, in the safe state described under "If the coordinator looks inactive" below, until the next deposit. Read-only on 11.11.2026 at 10:25 UTC: paused, reserves 0, debt 0.0065 lREACT (`cast call` on the system contract `0x8888…8888`, `reserves(address)` and `debt(address)` of the coordinator). Later readings go into `live/DAILY_<date>.md`. This deployment of 07.11.2026 (`main`) is the judged one: there is no redeploy for judging. We plan to keep it funded from submission until results; the lREACT for that is being collected through the faucet.
 
 ## Run it
 
 ```
 forge build
-forge test             # invariants, directed scenarios, liveness, production timing, gas, Reactive glue (~75–90 s; 67 tests)
+forge test             # invariants, directed scenarios, liveness, production timing, gas, Reactive glue (~40–90 s; 67 tests)
 script/mutants.sh      # full suite x 2 seeds per mutant: each must fail, the real contracts must pass (≈ 45 min on our machine)
 script/dryrun.sh       # the whole testnet deployment + the loops + the pay-per-call demo, on three local anvils (no network)
 python3 script/test_loop_logger.py   # offline tests of the live-loop logger's matching
@@ -156,7 +156,10 @@ Reactscan may show the coordinator on Lasna as inactive. That means it ran out o
 paused, not broken. A paused coordinator is not charged and gets no `react()` calls. While paused,
 no new budget is granted. Each wallet can spend at most what it already holds (today's bucket, and
 after midnight a tomorrow bucket that had already landed), so spending stays within the cap in
-force before the pause. Cap changes and a STOP's spread to other chains wait for the next deposit.
+force before the pause. A STOP pressed during a pause reaches the other chains after the next deposit,
+because the wallet re-announces it. A cap change or unstop sent during a pause is lost (in our run, a
+log emitted while the coordinator was paused got no `react()` and was not replayed later,
+`live/VIDEO_2026-11-10.md` §1): send it again after the deposit.
 Each vault stays withdrawable by its owner on its own chain.
 
 One `depositTo` wakes it, and Cron resumes by itself. We saw this live on 09.11:
@@ -173,9 +176,9 @@ chains keep spending only what they already hold until the deposit.
 
 The current deployment is the judged one (07.11.2026, `main`), with no redeploy for judging. It was
 paused from 09.11 09:15 UTC, funded again for the demo-video session on 10.11.2026 (3.5 lREACT), and
-is left to run its reserve down (0.12 lREACT at 02:56 UTC on 10.11) and pause again at no cost. Plan
-for the judging window: kept funded from submission until results. At the measured ≈ 2.9 lREACT a day
-(100 gwei), 05.12 to late December is ≈ 26 days ≈ 75 lREACT idle, plus ≈ 0.6 per STOP cycle
+was left to run its reserve down (0.135 lREACT at 02:30 UTC on 10.11) and pause again at no cost. Plan
+for the judging window: keep it funded from submission until results. At ≈ 2.9 lREACT a day as we
+measured it (100 gwei, `docs/COSTS_AND_LIMITS.md`), 05.12 to late December is ≈ 26 days ≈ 75 lREACT idle, plus ≈ 0.6 per STOP cycle
 (≈ 0.75 Sepolia ETH through the faucet). We deposit ≈ 6 lREACT every two days, never far ahead,
 because reserves can't be withdrawn, and check after each deposit that the next tick carries our
 tx (`loop_logger.py cron-check`). If it lapses anyway, it pauses in the safe state above, and one
@@ -183,6 +186,8 @@ deposit brings it back.
 
 ## More
 
+- `CLAIMS.md`: every public claim in this README, the video and its description, with its level of
+  proof (transaction, code, our own record, or only a plan) and where to check it.
 - `docs/DESIGN_AND_TESTS.md`: the protocol design, the network model, the invariants, the 39
   mutants, what turned out wrong in the design, and the honest list of what is not covered.
 - `docs/COSTS_AND_LIMITS.md`: what the tests do and don't show, fees and funding, measured costs.
@@ -192,8 +197,12 @@ deposit brings it back.
 Tested by fuzz + mutation (not proven), against our own model of the network. Built on
 reactive-lib-omni v0.1.0 (commit `3ade0dc`).
 
-**How this was built.** During the event, from 05.11.2026: the design was written on 05.11 and the
-protocol spike was committed the same day; the git history is kept as it was, unrewritten. Commit
+**How this was built.** During the event, from 05.11.2026 (submissions opened at 06:00 UTC−6). The
+design notes were written that morning, before any code. The scaffold was committed at 12:41 UTC−6
+(`4642d66`) and the protocol spike 19 minutes later (`96167b1`, 13:00: BudgetCore, SpendWallet, Vault,
+OwnerConsole and the network-model fuzz, about 2,000 lines), generated from those notes with AI coding
+tools, which the rules welcome for this track; the tests, mutants, reviews and live runs that followed
+are the later commits. The git history is kept as it was, unrewritten. Commit
 messages mention our internal review rounds ("round N", "judge", "hound", "W1–W3", "P1-8"): those are
 our own reviewers and work items, not the event's.
 
